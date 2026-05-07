@@ -1,0 +1,353 @@
+{% extends "base.html" %}
+{% block title %}Samtale {{ conversation_number }} – JKF{% endblock %}
+{% block page_title %}Samtale {{ conversation_number }}{% endblock %}
+
+{% block main_content %}
+<div class="d-flex gap-4" style="height: calc(100vh - 3rem);">
+    <!-- Sidebar - Conversation List -->
+    <div class="card" style="width: 300px; min-width: 300px; display: flex; flex-direction: column;">
+        <div class="card-header d-flex align-items-center justify-content-between">
+            <h5 class="mb-0">Samtaler</h5>
+            <a href="{{ url_for('all_conversations') }}" class="btn btn-sm btn-outline-secondary">
+                <i class="fas fa-th-list"></i>
+            </a>
+        </div>
+        <div class="card-body p-0" style="overflow-y: auto; flex: 1;" id="conversationSidebar">
+            {% for date, convs in grouped_conversations.items() %}
+            <div class="px-3 py-2" style="background: var(--bg-page); border-bottom: 1px solid var(--border-color); position: sticky; top: 0; z-index: 1;">
+                <small class="text-muted fw-semibold text-uppercase" style="font-size: 0.7rem; letter-spacing: 0.05em;">{{ date }}</small>
+            </div>
+            {% for conv in convs %}
+            <a href="{{ url_for('conversation', thread_id=conv.thread_id) }}"
+               class="d-flex align-items-center justify-content-between px-3 py-2 text-decoration-none conversation-link {{ 'active' if conv.thread_id == current_thread_id else '' }}"
+               style="border-bottom: 1px solid var(--border-light);">
+                <div>
+                    <div class="fw-medium" style="font-size: 0.875rem; color: var(--text-primary);">Samtale {{ conv.conversation_number }}</div>
+                    <small class="text-muted">{{ conv.timestamp }}</small>
+                </div>
+                {% if conv.feedback %}
+                <span style="font-size: 18px; line-height: 1;" title="{% if conv.feedback == 1 %}Forfærdelig{% elif conv.feedback == 2 %}Dårlig{% elif conv.feedback == 3 %}Okay{% elif conv.feedback == 4 %}God{% else %}Fantastisk{% endif %}">
+                    {% if conv.feedback == 1 %}😠{% elif conv.feedback == 2 %}☹️{% elif conv.feedback == 3 %}😐{% elif conv.feedback == 4 %}😃{% else %}🤩{% endif %}
+                </span>
+                {% endif %}
+            </a>
+            {% endfor %}
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="flex-grow-1 d-flex flex-column" style="min-width: 0;">
+        <!-- Header -->
+        <div class="d-flex align-items-center gap-2 mb-3">
+            <h4 class="mb-0">
+                Samtale {{ conversation_number }}
+                {% if feedback %}
+                <span style="font-size: 1.25rem; vertical-align: middle;" title="{% if feedback == 1 %}Forfærdelig{% elif feedback == 2 %}Dårlig{% elif feedback == 3 %}Okay{% elif feedback == 4 %}God{% else %}Fantastisk{% endif %}">
+                    {% if feedback == 1 %}😠{% elif feedback == 2 %}☹️{% elif feedback == 3 %}😐{% elif feedback == 4 %}😃{% else %}🤩{% endif %}
+                </span>
+                {% endif %}
+            </h4>
+            {% if has_knowledge_gap %}
+            <span class="badge bg-warning text-dark">Videnshul</span>
+            {% endif %}
+        </div>
+
+        <!-- Chat Messages -->
+        <div class="card flex-grow-1" style="min-height: 0;">
+            <div class="card-body p-4" style="overflow-y: auto; background: var(--bg-page);" id="messageContainer">
+                {% set ns = namespace(last_question='') %}
+                {% for msg in messages %}
+                {% if msg.role == 'user' %}{% set ns.last_question = msg.content %}{% endif %}
+                <div class="d-flex {{ 'justify-content-end' if msg.role == 'user' else '' }} mb-3">
+                    <div class="message-bubble {{ 'user-bubble' if msg.role == 'user' else 'bot-bubble' }}"
+                         {% if msg.role == 'assistant' %}data-question="{{ ns.last_question | e }}"{% endif %}>
+                        <div class="message-content">
+                            {% if msg.role == 'assistant' %}{{ msg.content|safe }}{% else %}{{ msg.content }}{% endif %}
+                        </div>
+                        {% if msg.role == 'assistant' %}
+                        <div class="bot-train-action">
+                            <button class="btn-train-inline" onclick="openTrainModal(this)" title="Ret svaret og gem som træningsdata">
+                                <i class="fas fa-edit"></i> Ret & træn
+                            </button>
+                        </div>
+                        {% endif %}
+                        <div class="message-time">{{ msg.timestamp|danish_datetime }}</div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- Comments -->
+        <div class="card mt-3" style="flex-shrink: 0;">
+            <div class="card-header py-2">
+                <h6 class="mb-0"><i class="fas fa-comment-dots me-2 text-muted" style="font-size:0.875rem;"></i>Kommentarer</h6>
+            </div>
+            <div id="commentsList" style="max-height: 140px; overflow-y: auto;">
+                {% if comments %}
+                {% for c in comments %}
+                <div class="d-flex gap-3 px-4 py-3 border-bottom comment-item">
+                    <div class="d-flex align-items-center justify-content-center rounded-circle flex-shrink-0"
+                         style="width:32px;height:32px;background:var(--primary-light);font-size:0.8rem;font-weight:600;color:var(--primary);">
+                        {{ c.user[0]|upper }}
+                    </div>
+                    <div class="flex-grow-1 min-w-0">
+                        <div class="d-flex align-items-baseline gap-2">
+                            <span class="fw-semibold" style="font-size:0.8125rem;">{{ c.user }}</span>
+                            <small class="text-muted" style="font-size:0.75rem;">{{ c.timestamp|danish_datetime }}</small>
+                        </div>
+                        <p class="mb-0 mt-1" style="font-size:0.875rem; color:var(--text-secondary);">{{ c.content }}</p>
+                    </div>
+                </div>
+                {% endfor %}
+                {% else %}
+                <div class="text-muted text-center py-4" id="noCommentsMsg" style="font-size:0.875rem;">
+                    <i class="fas fa-comment-slash d-block mb-2" style="font-size:1.25rem; opacity:0.4;"></i>
+                    Ingen kommentarer endnu
+                </div>
+                {% endif %}
+            </div>
+            <div class="px-4 py-3 border-top d-flex gap-2 align-items-center" style="background:var(--bg-page); border-radius: 0 0 var(--radius-lg) var(--radius-lg);">
+                <input type="text" class="form-control form-control-sm" id="commentInput"
+                       placeholder="Skriv en kommentar..." style="border-radius: var(--radius);">
+                <button class="btn btn-sm btn-primary d-flex align-items-center gap-1 flex-shrink-0" id="commentSubmit" style="border-radius: var(--radius);">
+                    <i class="fas fa-paper-plane" style="font-size:0.75rem;"></i>
+                    <span style="font-size:0.8125rem;">Send</span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Ret & Træn Modal -->
+<div class="modal fade" id="trainModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="fas fa-graduation-cap me-2 text-primary"></i>Ret chatbot-svar og gem i vidensbase
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted small mb-3">
+                    Ret svaret nedenfor og gem det som et Q&amp;A-par i vidensbasen.
+                </p>
+                <div class="mb-3">
+                    <label for="trainQuestion" class="form-label fw-semibold">Spørgsmål</label>
+                    <input type="text" class="form-control" id="trainQuestion" required>
+                </div>
+                <div class="mb-3">
+                    <label for="trainAnswer" class="form-label fw-semibold">Svar</label>
+                    <textarea class="form-control" id="trainAnswer" rows="8" required></textarea>
+                    <small class="form-text text-muted">Tip: Brug formatet [link tekst](url) for at tilføje links</small>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Annuller</button>
+                <button type="button" class="btn btn-outline-primary" id="trainSaveBtn" onclick="saveTrainEntry(false)">
+                    <i class="fas fa-save me-2"></i>Gem i vidensbase
+                </button>
+                <button type="button" class="btn btn-primary" id="trainSaveAndTrainBtn" onclick="saveTrainEntry(true)">
+                    <i class="fas fa-graduation-cap me-2"></i>Gem &amp; træn
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    .conversation-link {
+        color: inherit;
+        transition: background 0.15s;
+    }
+    .conversation-link:hover {
+        background: var(--bg-hover) !important;
+    }
+    .conversation-link.active {
+        background: var(--primary-light) !important;
+        border-left: 3px solid var(--primary) !important;
+    }
+    .message-bubble {
+        max-width: 70%;
+        padding: 0.75rem 1rem;
+        border-radius: 1rem;
+    }
+    .user-bubble {
+        background: var(--primary);
+        color: white;
+        border-bottom-right-radius: 4px;
+    }
+    .bot-bubble {
+        background: white;
+        border: 1px solid var(--border-color);
+        border-bottom-left-radius: 4px;
+    }
+    .message-content { font-size: 0.9375rem; line-height: 1.5; }
+    .message-content a { color: var(--primary); text-decoration: underline; }
+    .user-bubble .message-content a { color: white; }
+    .message-content ul { padding-left: 1.25rem; margin-bottom: 0; }
+    .message-time { font-size: 0.7rem; opacity: 0.7; margin-top: 0.25rem; text-align: right; }
+    .user-bubble .message-time { color: rgba(255,255,255,0.7); }
+    .bot-train-action { margin-top: 0.4rem; }
+    .btn-train-inline {
+        background: none;
+        border: 1px solid var(--border-color, #dee2e6);
+        border-radius: var(--radius);
+        color: var(--text-muted, #6c757d);
+        font-size: 0.75rem;
+        padding: 0.2rem 0.55rem;
+        cursor: pointer;
+        transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+    .btn-train-inline:hover {
+        background: var(--primary-light, #e8f0fe);
+        color: var(--primary, #1a56db);
+        border-color: var(--primary, #1a56db);
+    }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const sidebar = document.getElementById('conversationSidebar');
+    const csrfToken = document.querySelector('meta[name=csrf-token]') ? document.querySelector('meta[name=csrf-token]').getAttribute('content') : '';
+
+    // Restore + save sidebar scroll position
+    const savedScroll = localStorage.getItem('sidebarScrollPos');
+    if (savedScroll) sidebar.scrollTop = parseInt(savedScroll);
+    sidebar.querySelectorAll('.conversation-link').forEach(link => {
+        link.addEventListener('click', () => localStorage.setItem('sidebarScrollPos', sidebar.scrollTop));
+    });
+
+    // Scroll active item into view
+    const active = sidebar.querySelector('.conversation-link.active');
+    if (active) active.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+    // Comment submission
+    const threadId = '{{ thread_id }}';
+    document.getElementById('commentSubmit').addEventListener('click', submitComment);
+    document.getElementById('commentInput').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') submitComment();
+    });
+
+    // --- Ret & Træn ---
+    function htmlToPlainText(html) {
+        let t = html;
+        t = t.replace(/<\/p>/gi, '\n\n').replace(/<p[^>]*>/gi, '');
+        t = t.replace(/<\/div>/gi, '\n').replace(/<div[^>]*>/gi, '');
+        t = t.replace(/<br\s*\/?>/gi, '\n');
+        t = t.replace(/<\/li>/gi, '\n').replace(/<li[^>]*>/gi, '• ');
+        t = t.replace(/<\/?[uo]l[^>]*>/gi, '\n');
+        t = t.replace(/<a\s+(?:[^>]*?\s+)?href=(["'])(.*?)\1[^>]*>(.*?)<\/a>/gi, '[$3]($2)');
+        t = t.replace(/<[^>]+>/g, '');
+        const tmp = document.createElement('div');
+        tmp.innerHTML = t;
+        return (tmp.textContent || tmp.innerText || t).replace(/\n{3,}/g, '\n\n').trim();
+    }
+
+    window.openTrainModal = function(btn) {
+        const bubble = btn.closest('.message-bubble');
+        const question = bubble.dataset.question || '';
+        const contentEl = bubble.querySelector('.message-content');
+        const answer = htmlToPlainText(contentEl ? contentEl.innerHTML : '');
+        document.getElementById('trainQuestion').value = question;
+        document.getElementById('trainAnswer').value = answer;
+        const modal = new bootstrap.Modal(document.getElementById('trainModal'));
+        modal.show();
+    };
+
+    window.saveTrainEntry = function(andSync) {
+        const question = document.getElementById('trainQuestion').value.trim();
+        const answer = document.getElementById('trainAnswer').value.trim();
+        if (!question || !answer) {
+            if (typeof createToast === 'function') createToast('Udfyld venligst både spørgsmål og svar', 'warning');
+            return;
+        }
+        const saveBtn = document.getElementById('trainSaveBtn');
+        const trainBtn = document.getElementById('trainSaveAndTrainBtn');
+        saveBtn.disabled = true;
+        trainBtn.disabled = true;
+
+        fetch('/api/kb', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+            body: JSON.stringify({ question, answer })
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (!data.success) {
+                if (typeof createToast === 'function') createToast('Fejl: ' + (data.message || 'Ukendt fejl'), 'danger');
+                return;
+            }
+            if (!andSync) {
+                bootstrap.Modal.getInstance(document.getElementById('trainModal')).hide();
+                if (typeof createToast === 'function') createToast('Gemt i vidensbase!', 'success');
+                return;
+            }
+            if (typeof createToast === 'function') createToast('Synkroniserer til vidensbase...', 'info');
+            return fetch('/api/kb/sync', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken }
+            })
+            .then(r => r.json())
+            .then(syncData => {
+                bootstrap.Modal.getInstance(document.getElementById('trainModal')).hide();
+                if (syncData.success) {
+                    if (typeof createToast === 'function') createToast('Gemt og trænet! Ændringerne er nu aktive.', 'success');
+                } else {
+                    if (typeof createToast === 'function') createToast('Gemt, men synkronisering fejlede: ' + (syncData.message || ''), 'warning');
+                }
+            });
+        })
+        .catch(() => { if (typeof createToast === 'function') createToast('Der opstod en fejl', 'danger'); })
+        .finally(() => { saveBtn.disabled = false; trainBtn.disabled = false; });
+    };
+    // --- /Ret & Træn ---
+
+    function submitComment() {
+        const input = document.getElementById('commentInput');
+        const comment = input.value.trim();
+        if (!comment) return;
+        input.value = '';
+
+        fetch(`/api/add_comment/${threadId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+            body: JSON.stringify({ comment: comment })
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                const noMsg = document.getElementById('noCommentsMsg');
+                if (noMsg) noMsg.remove();
+                const list = document.getElementById('commentsList');
+                const letter = data.user ? data.user[0].toUpperCase() : '?';
+                const div = document.createElement('div');
+                div.className = 'd-flex gap-3 px-4 py-3 border-bottom comment-item';
+                div.innerHTML = `
+                    <div class="d-flex align-items-center justify-content-center rounded-circle flex-shrink-0"
+                         style="width:32px;height:32px;background:var(--primary-light);font-size:0.8rem;font-weight:600;color:var(--primary);">
+                        ${letter}
+                    </div>
+                    <div class="flex-grow-1 min-w-0">
+                        <div class="d-flex align-items-baseline gap-2">
+                            <span class="fw-semibold" style="font-size:0.8125rem;">${data.user || 'Ukendt'}</span>
+                            <small class="text-muted" style="font-size:0.75rem;">Lige nu</small>
+                        </div>
+                        <p class="mb-0 mt-1" style="font-size:0.875rem; color:var(--text-secondary);">${comment}</p>
+                    </div>`;
+                list.appendChild(div);
+                list.scrollTop = list.scrollHeight;
+                if (typeof createToast === 'function') createToast('Kommentar tilføjet', 'success');
+            }
+        })
+        .catch(() => { if (typeof createToast === 'function') createToast('Fejl ved tilføjelse af kommentar', 'danger'); });
+    }
+});
+</script>
+{% endblock %}

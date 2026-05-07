@@ -1,0 +1,1428 @@
+{% extends "base.html" %}
+{% block title %}Vidensbase – JKF{% endblock %}
+{% block page_title %}Vidensbase{% endblock %}
+
+{% block extra_css %}
+<style>
+    .drop-zone {
+        border: 2px dashed var(--border-color);
+        border-radius: var(--radius-lg);
+        padding: 2.5rem 2rem;
+        text-align: center;
+        transition: var(--transition);
+        cursor: pointer;
+        background: var(--bg-page);
+    }
+    .drop-zone:hover,
+    .drop-zone.drag-over {
+        border-color: var(--primary);
+        background: var(--primary-light);
+    }
+    .drop-zone-icon {
+        font-size: 2.5rem;
+        color: var(--text-muted);
+        margin-bottom: 0.75rem;
+        display: block;
+    }
+    .drop-zone.drag-over .drop-zone-icon { color: var(--primary); }
+
+    .file-queue { margin-top: 1.25rem; }
+    .file-queue-item {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.625rem 0.875rem;
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius);
+        margin-bottom: 0.5rem;
+        font-size: 0.875rem;
+    }
+    .file-queue-item .file-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .file-queue-item .file-size { color: var(--text-muted); white-space: nowrap; }
+    .file-queue-item .remove-file { cursor: pointer; color: var(--text-muted); }
+    .file-queue-item .remove-file:hover { color: var(--danger); }
+
+    .upload-progress { margin-top: 0.5rem; }
+    .progress { height: 6px; border-radius: 3px; background: var(--bg-page); }
+    .progress-bar { border-radius: 3px; transition: width 0.3s ease; }
+
+    .status-badge-processing { background: var(--warning-light); color: var(--warning); }
+    .status-badge-ready      { background: var(--success-light); color: var(--success); }
+    .status-badge-error      { background: var(--danger-light);  color: var(--danger); }
+
+    .doc-type-badge {
+        display: inline-flex; align-items: center; gap: 0.3rem;
+        font-size: 0.7rem; font-weight: 600; letter-spacing: 0.04em;
+        text-transform: uppercase; padding: 0.2rem 0.5rem;
+        border-radius: var(--radius-sm);
+        background: var(--bg-hover); color: var(--text-secondary);
+    }
+
+    .select-col { width: 40px; }
+    .batch-toolbar {
+        display: none;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.625rem 1.5rem;
+        background: var(--primary-light);
+        border-bottom: 1px solid var(--border-color);
+        font-size: 0.875rem;
+    }
+    .batch-toolbar.visible { display: flex; }
+
+    [data-theme="dark"] .drop-zone { background: var(--bg-card); }
+    [data-theme="dark"] .drop-zone:hover,
+    [data-theme="dark"] .drop-zone.drag-over { background: var(--primary-light); }
+    [data-theme="dark"] .file-queue-item { background: var(--bg-card); }
+    [data-theme="dark"] .progress { background: var(--bg-hover); }
+
+    .website-list {
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-lg);
+        max-height: 320px;
+        overflow: auto;
+        background: var(--bg-card);
+        box-shadow: var(--shadow-sm);
+    }
+    .website-list-row {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 1rem 1.1rem;
+        border-bottom: 1px solid var(--border-color);
+    }
+    .website-list-row:last-child { border-bottom: 0; }
+    .website-list-title {
+        font-weight: 700;
+        color: var(--text-primary);
+        margin-bottom: 0.15rem;
+    }
+    .website-list-url {
+        display: block;
+        font-size: 0.8rem;
+        color: var(--text-muted);
+        word-break: break-all;
+    }
+    .website-list-meta {
+        display: block;
+        font-size: 0.75rem;
+        color: var(--text-muted);
+        margin-top: 0.2rem;
+    }
+    .website-empty {
+        padding: 1.25rem;
+        color: var(--text-muted);
+        font-size: 0.9rem;
+    }
+    .website-panel {
+        background: linear-gradient(180deg, var(--bg-card), var(--bg-page));
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-lg);
+        padding: 1rem;
+        height: 100%;
+    }
+    .website-panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        margin-bottom: 0.85rem;
+    }
+    .website-panel-title {
+        font-size: 0.95rem;
+        font-weight: 700;
+        margin: 0;
+    }
+    .website-panel-subtitle {
+        color: var(--text-muted);
+        font-size: 0.78rem;
+        margin-top: 0.1rem;
+    }
+    .website-count-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 2rem;
+        height: 2rem;
+        padding: 0 0.65rem;
+        border-radius: 999px;
+        background: var(--primary-light);
+        color: var(--primary);
+        font-size: 0.8rem;
+        font-weight: 700;
+    }
+    .website-form-card {
+        border: 1px dashed var(--border-color);
+        border-radius: var(--radius);
+        padding: 0.9rem;
+        background: var(--bg-page);
+        margin-bottom: 1rem;
+    }
+    .website-list-actions {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        flex-shrink: 0;
+    }
+    .website-action-btn {
+        border-radius: 999px;
+        padding-left: 0.8rem;
+        padding-right: 0.8rem;
+    }
+    .website-modal-list {
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-lg);
+        max-height: 60vh;
+        overflow: auto;
+        background: var(--bg-card);
+    }
+    .website-modal-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        margin-bottom: 1rem;
+    }
+    .website-modal-search {
+        max-width: 360px;
+    }
+</style>
+{% endblock %}
+
+{% block main_content %}
+<div class="mb-4">
+    <h2 class="mb-1">Vidensbase</h2>
+    <p class="text-muted mb-0">Upload og administrer dokumenter der bruges af chatbotten</p>
+</div>
+
+<!-- Website Knowledge Base Section -->
+<div class="card mb-4">
+    <div class="card-header">
+        <div class="d-flex align-items-center flex-wrap gap-3 w-100">
+            <h5 class="mb-0"><i class="fas fa-globe me-2"></i>Hjemmeside Vidensbase</h5>
+            <span class="badge bg-secondary" id="websiteChunkBadge" style="font-size:0.8rem;">Indlæser...</span>
+            <div class="d-flex align-items-center gap-2" style="margin-left: auto;">
+                <button class="btn btn-outline-danger btn-sm" id="btnClearWebsite" onclick="clearWebsite()" title="Fjern al hjemmeside-data fra vidensbasen">
+                    <i class="fas fa-trash me-1"></i>Ryd data
+                </button>
+                <button class="btn btn-outline-primary btn-sm" id="btnReindex" onclick="startScrape(true)" title="Slet eksisterende data og indekser forfra">
+                    <i class="fas fa-redo me-1"></i>Genindekser
+                </button>
+                <button class="btn btn-primary btn-sm" id="btnStartScrape" onclick="startScrape(false)">
+                    <i class="fas fa-play me-1"></i>Start indeksering
+                </button>
+            </div>
+        </div>
+    </div>
+    <div class="card-body">
+        <!-- Stats + info row -->
+        <div class="d-flex align-items-center flex-wrap gap-4 mb-3">
+            <button type="button" class="d-inline-flex align-items-center gap-2 btn btn-link p-0 text-decoration-none"
+                    data-bs-toggle="modal" data-bs-target="#indexedPagesModal">
+                <span class="fw-bold" style="font-size:1.25rem; color:var(--primary);" id="wsStat_pages">—</span>
+                <span class="text-muted small">sider indekseret</span>
+                <i class="fas fa-arrow-up-right-from-square text-muted" style="font-size:0.65rem;"></i>
+            </button>
+            <div class="d-inline-flex align-items-center gap-2">
+                <i class="fas fa-clock text-muted" style="font-size:0.8rem;"></i>
+                <span class="text-muted small">Sidst kørt:</span>
+                <span class="fw-semibold small" id="wsStat_lastRun">—</span>
+            </div>
+            <p class="text-muted mb-0 ms-auto d-none d-lg-block" style="font-size:0.8rem; max-width:480px;">
+                <i class="fas fa-info-circle text-primary me-1"></i>
+                Crawleren indekserer automatisk JKF-sider. En fuld kørsel tager typisk <strong>20–40 minutter</strong> og kører i baggrunden.
+            </p>
+        </div>
+
+        <!-- Info note on small screens -->
+        <p class="text-muted mb-3 d-lg-none" style="font-size:0.8rem;">
+            <i class="fas fa-info-circle text-primary me-1"></i>
+            Crawleren indekserer automatisk JKF-sider. En fuld kørsel tager typisk <strong>20–40 minutter</strong> og kører i baggrunden.
+        </p>
+
+        <!-- Progress (shown only while running) -->
+        <div id="wsProgressSection" style="display:none;" class="mb-3">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+                <small class="text-muted" id="wsProgressLabel">Starter...</small>
+                <small class="text-muted" id="wsProgressPct">0%</small>
+            </div>
+            <div class="progress mb-2" style="height: 8px;">
+                <div class="progress-bar progress-bar-striped progress-bar-animated bg-primary"
+                     id="wsProgressBar" role="progressbar" style="width: 0%"></div>
+            </div>
+            <small class="text-muted text-truncate d-block" id="wsCurrentUrl"></small>
+        </div>
+
+        <!-- Status is shown via top-right toast (no inline alert needed) -->
+
+        <!-- Two panels side by side -->
+        <div class="row g-3">
+            <div class="col-lg-6">
+                <div class="website-panel">
+                    <div class="website-panel-header">
+                        <div>
+                            <h6 class="website-panel-title">Sider der skal scrapes</h6>
+                            <div class="website-panel-subtitle">Tilføj specifikke sider fra JKF eller andre websites, selv hvis de ikke opdages automatisk.</div>
+                        </div>
+                        <span class="website-count-badge" id="wsIncludeCount">0</span>
+                    </div>
+                    <div class="website-form-card">
+                        <label class="form-label fw-semibold small mb-2">Tilføj side</label>
+                        <div class="input-group">
+                            <input type="url" class="form-control" id="wsIncludeUrl" placeholder="https://example.com/side">
+                            <button class="btn btn-outline-primary" type="button" onclick="addWebsitePage()">Tilføj</button>
+                        </div>
+                        <div class="website-panel-subtitle mt-2">Manuelle URL'er crawles som konkrete sider. Kun JKF-domænet bliver opdaget rekursivt via crawleren.</div>
+                    </div>
+                    <div class="website-list" id="wsIncludeList"></div>
+                </div>
+            </div>
+            <div class="col-lg-6">
+                <div class="website-panel">
+                    <div class="website-panel-header">
+                        <div>
+                            <h6 class="website-panel-title">Ekskluderede sider</h6>
+                            <div class="website-panel-subtitle">Sider her bliver sprunget over ved fremtidige website-scrapes.</div>
+                        </div>
+                        <span class="website-count-badge" id="wsExcludeCount">0</span>
+                    </div>
+                    <div class="website-list" id="wsExcludeList"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="indexedPagesModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div>
+                    <h5 class="modal-title mb-1"><i class="fas fa-globe me-2 text-primary"></i>Indekserede sider</h5>
+                    <div class="text-muted small">Sider der aktuelt ligger i website-vidensbasen.</div>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="website-modal-toolbar">
+                    <div class="text-muted small"><span id="wsModalCount">0</span> sider i den aktuelle indeksliste</div>
+                    <input type="search" class="form-control website-modal-search" id="wsIndexedSearch" placeholder="Søg efter titel eller URL">
+                </div>
+                <div class="website-modal-list" id="wsIndexedModalList"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Documents table -->
+<div class="card" id="documentsCard">
+    <div class="card-header">
+        <div class="d-flex align-items-center flex-wrap gap-3 w-100">
+            <h5 class="mb-0"><i class="fas fa-folder-open me-2"></i>Uploadede dokumenter</h5>
+            <span class="badge bg-secondary" id="docCountBadge" style="font-size:0.8rem;">{{ documents|length }} {{ 'dokument' if documents|length == 1 else 'dokumenter' }}</span>
+            <div class="d-flex align-items-center gap-2" style="margin-left: auto;">
+                <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#uploadModal">
+                    <i class="fas fa-upload me-1"></i>Upload dokumenter
+                </button>
+            </div>
+        </div>
+    </div>
+    <!-- Batch toolbar (shown when rows are selected) -->
+    <div class="batch-toolbar" id="batchToolbar">
+        <span id="selectedCount" class="fw-semibold text-primary">0 valgt</span>
+        <button class="btn btn-sm btn-danger ms-2" id="batchDeleteBtn">
+            <i class="fas fa-trash me-1"></i>Slet valgte
+        </button>
+        <button class="btn btn-sm btn-outline-secondary" id="clearSelectionBtn">Fravælg alle</button>
+    </div>
+
+    <div class="card-body p-0">
+        <!-- Table is always in the DOM so JS can append rows without a page reload -->
+        <div class="table-responsive" id="documentsTableWrapper" {% if not documents %}style="display:none;"{% endif %}>
+            <table class="table table-hover mb-0" id="documentsTable">
+                <thead>
+                    <tr>
+                        <th class="select-col">
+                            <input type="checkbox" class="form-check-input" id="selectAll" title="Vælg alle">
+                        </th>
+                        <th>Filnavn</th>
+                        <th>Type</th>
+                        <th>Størrelse</th>
+                        <th>Uploadet</th>
+                        <th>Status</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody id="documentsTableBody">
+                    {% for doc in documents %}
+                    <tr data-doc-id="{{ doc.id }}">
+                        <td class="select-col">
+                            <input type="checkbox" class="form-check-input doc-checkbox" value="{{ doc.id }}">
+                        </td>
+                        <td>
+                            <i class="fas fa-file-{{ 'pdf' if doc.file_type == 'pdf' else 'alt' }} me-2"
+                               style="color: {{ '#e74c3c' if doc.file_type == 'pdf' else 'var(--text-muted)' }};"></i>
+                            <span class="fw-medium doc-name-display" id="name-{{ doc.id }}">{{ doc.original_name }}</span>
+                        </td>
+                        <td><span class="doc-type-badge">{{ doc.file_type | upper }}</span></td>
+                        <td class="text-muted">
+                            {%- set sz = doc.file_size -%}
+                            {%- if sz >= 1073741824 -%}{{ (sz / 1073741824) | round(2) }} GB
+                            {%- elif sz >= 1048576 -%}{{ (sz / 1048576) | round(1) }} MB
+                            {%- else -%}{{ (sz / 1024) | round(1) }} KB
+                            {%- endif -%}
+                        </td>
+                        <td class="text-muted" style="white-space:nowrap;">{{ doc.created_at | danish_datetime }}</td>
+                        <td id="status-{{ doc.id }}">
+                            {% if doc.status == 'ready' %}
+                            <span class="badge status-badge-ready">Klar</span>
+                            {% elif doc.status == 'processing' %}
+                            <span class="badge status-badge-processing">
+                                <i class="fas fa-spinner fa-spin me-1" style="font-size:0.65rem;"></i>Behandler
+                            </span>
+                            {% else %}
+                            <span class="badge status-badge-error" title="{{ doc.error_message or '' }}">Fejl</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end" style="white-space:nowrap;">
+                            <button class="btn btn-sm btn-outline-secondary rename-doc-btn me-1" data-doc-id="{{ doc.id }}" data-doc-name="{{ doc.original_name }}" title="Omdøb">
+                                <i class="fas fa-pen"></i>
+                            </button>
+                            <button class="btn btn-sm btn-outline-danger delete-doc-btn" data-doc-id="{{ doc.id }}" title="Slet">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <div class="empty-state p-5" id="emptyState" {% if documents %}style="display:none;"{% endif %}>
+            <div class="empty-state-icon"><i class="fas fa-folder-open"></i></div>
+            <div class="empty-state-title">Ingen dokumenter endnu</div>
+            <div class="empty-state-text">Upload PDF- eller tekstfiler for at give chatbotten mere viden</div>
+            <button class="btn btn-primary mt-3" data-bs-toggle="modal" data-bs-target="#uploadModal">
+                <i class="fas fa-upload me-2"></i>Upload dit første dokument
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Upload Modal -->
+<div class="modal fade" id="uploadModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-upload me-2 text-primary"></i>Upload dokumenter</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Drop zone -->
+                <div class="drop-zone" id="dropZone">
+                    <i class="fas fa-cloud-upload-alt drop-zone-icon"></i>
+                    <div class="fw-semibold mb-1" style="font-size:1rem;">Træk filer hertil</div>
+                    <div class="text-muted mb-3" style="font-size:0.875rem;">eller klik for at vælge filer</div>
+                    <div class="text-muted" style="font-size:0.8rem;">Understøttede formater: PDF, TXT &nbsp;·&nbsp; Maks. 32 MB pr. fil</div>
+                    <input type="file" id="fileInput" multiple accept=".pdf,.txt" style="display:none;">
+                </div>
+
+                <!-- File queue -->
+                <div class="file-queue" id="fileQueue" style="display:none;"></div>
+
+                <!-- Upload progress -->
+                <div class="upload-progress mt-3" id="uploadProgress" style="display:none;">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <small class="fw-semibold" id="uploadStatusText">Uploader…</small>
+                        <small class="text-muted" id="uploadCountText"></small>
+                    </div>
+                    <div class="progress">
+                        <div class="progress-bar bg-primary" id="uploadProgressBar" style="width:0%"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal" id="cancelUploadBtn">Annuller</button>
+                <button type="button" class="btn btn-primary" id="startUploadBtn" disabled>
+                    <i class="fas fa-upload me-2"></i>Upload <span id="uploadBtnCount"></span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Confirm Modal -->
+<div class="modal fade" id="deleteModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Slet dokument</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="mb-0">Er du sikker? Dokumentet og alle dets data fjernes fra vidensbasen.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Annuller</button>
+                <button type="button" class="btn btn-danger" id="confirmDeleteBtn">Slet</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Rename Modal -->
+<div class="modal fade" id="renameModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Omdøb dokument</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <label class="form-label fw-semibold" style="font-size:0.875rem;">Nyt navn</label>
+                <input type="text" class="form-control" id="renameInput" placeholder="Dokumentnavn...">
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Annuller</button>
+                <button type="button" class="btn btn-primary" id="confirmRenameBtn">Gem</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Batch Delete Confirm Modal -->
+<div class="modal fade" id="batchDeleteModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Slet valgte dokumenter</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="mb-0">Er du sikker? <strong id="batchDeleteCount"></strong> dokumenter og alle deres data fjernes fra vidensbasen.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Annuller</button>
+                <button type="button" class="btn btn-danger" id="confirmBatchDeleteBtn">Slet alle valgte</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Start Indeksering Modal -->
+<div class="modal fade" id="startScrapeModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-play me-2 text-primary"></i>Start indeksering</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="mb-1">Crawleren gennemgår <strong>jkfuniverse.com/da/</strong> og indekserer alle sider i vidensbasen.</p>
+                <p class="mb-0 text-muted" style="font-size:0.875rem;"><i class="fas fa-clock me-1"></i>En fuld kørsel tager typisk <strong>20–40 minutter</strong> og kører i baggrunden.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Annuller</button>
+                <button type="button" class="btn btn-primary" id="confirmStartScrapeBtn">
+                    <i class="fas fa-play me-1"></i>Start indeksering
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Genindekser Modal -->
+<div class="modal fade" id="reindexModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-redo me-2 text-primary"></i>Genindekser fra bunden</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="mb-1">Dette sletter al eksisterende hjemmeside-data og indekserer <strong>jkfuniverse.com/da/</strong> forfra.</p>
+                <p class="mb-0 text-muted" style="font-size:0.875rem;"><i class="fas fa-clock me-1"></i>En fuld kørsel tager typisk <strong>20–40 minutter</strong> og kører i baggrunden.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Annuller</button>
+                <button type="button" class="btn btn-primary" id="confirmReindexBtn">
+                    <i class="fas fa-redo me-1"></i>Genindekser
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Ryd Data Modal -->
+<div class="modal fade" id="clearWebsiteModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-trash me-2 text-danger"></i>Ryd hjemmeside-data</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="mb-1">Dette fjerner al hjemmeside-data fra vidensbasen.</p>
+                <p class="mb-0 text-muted" style="font-size:0.875rem;">Chatbotten vil ikke længere have adgang til indhold fra <strong>jkfuniverse.com</strong>, indtil du starter en ny indeksering.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Annuller</button>
+                <button type="button" class="btn btn-danger" id="confirmClearWebsiteBtn">
+                    <i class="fas fa-trash me-1"></i>Ryd data
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Ekskluder Side Modal -->
+<div class="modal fade" id="excludePageModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-ban me-2 text-warning"></i>Ekskluder side</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="mb-1">Siden ekskluderes fra fremtidige website-scrapes og fjernes fra vidensbasen.</p>
+                <p class="text-muted mb-0 text-truncate" id="excludePageUrl" style="font-size:0.8rem;"></p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Annuller</button>
+                <button type="button" class="btn btn-warning" id="confirmExcludePageBtn">
+                    <i class="fas fa-ban me-1"></i>Ekskluder side
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const csrfToken = document.querySelector('meta[name=csrf-token]').getAttribute('content');
+
+// ── Website scraper UI ────────────────────────────────────────────────────────
+let _wsPoller = null;
+let _wsPagesLoaded = false;
+let _wsIndexedPages = [];
+
+function formatWebsiteDate(value) {
+    if (!value) return '—';
+    const d = new Date(value);
+    return d.toLocaleString('da-DK', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
+}
+
+function renderWebsiteList(targetId, items, emptyText, renderer) {
+    const el = document.getElementById(targetId);
+    if (!items.length) {
+        el.innerHTML = `<div class="website-empty">${emptyText}</div>`;
+        return;
+    }
+    el.innerHTML = items.map(renderer).join('');
+}
+
+function websiteIndexedPageRow(page) {
+    return `
+        <div class="website-list-row">
+            <div>
+                <div class="website-list-title">${escapeHtml(page.title || page.url)}</div>
+                <span class="website-list-url">${escapeHtml(page.url)}</span>
+                <span class="website-list-meta">${page.chunk_count} chunks · indekseret ${formatWebsiteDate(page.indexed_at)}</span>
+            </div>
+            <div class="website-list-actions">
+                <button class="btn btn-sm btn-outline-danger website-action-btn" onclick="excludeWebsitePage('${encodeURIComponent(page.url)}')">
+                    Ekskluder
+                </button>
+            </div>
+        </div>`;
+}
+
+function renderIndexedPagesModal() {
+    const search = (document.getElementById('wsIndexedSearch')?.value || '').trim().toLowerCase();
+    const filtered = _wsIndexedPages.filter(page => {
+        if (!search) return true;
+        return (page.title || '').toLowerCase().includes(search) || (page.url || '').toLowerCase().includes(search);
+    });
+
+    document.getElementById('wsModalCount').textContent = filtered.length.toLocaleString('da-DK');
+    renderWebsiteList(
+        'wsIndexedModalList',
+        filtered,
+        search ? 'Ingen sider matcher din søgning.' : 'Ingen sider er registreret som indekserede endnu.',
+        websiteIndexedPageRow
+    );
+}
+
+function loadWebsitePages() {
+    fetch('/api/website/pages')
+        .then(r => r.json())
+        .then(r => {
+            if (!r.success) return;
+
+            _wsIndexedPages = r.indexed_pages || [];
+            renderIndexedPagesModal();
+
+            renderWebsiteList(
+                'wsIncludeList',
+                r.include_rules,
+                'Ingen manuelt tilføjede sider.',
+                rule => `
+                    <div class="website-list-row">
+                        <div>
+                            <div class="website-list-title">Manuelt inkluderet</div>
+                            <span class="website-list-url">${escapeHtml(rule.url)}</span>
+                            <span class="website-list-meta">Tilføjet ${formatWebsiteDate(rule.created_at)}</span>
+                        </div>
+                        <div class="website-list-actions">
+                            <button class="btn btn-sm btn-outline-secondary website-action-btn" onclick="deleteWebsiteRule(${rule.id})">Fjern</button>
+                        </div>
+                    </div>`
+            );
+
+            renderWebsiteList(
+                'wsExcludeList',
+                r.exclude_rules,
+                'Ingen ekskluderede sider.',
+                rule => `
+                    <div class="website-list-row">
+                        <div>
+                            <div class="website-list-title">Ekskluderet</div>
+                            <span class="website-list-url">${escapeHtml(rule.url)}</span>
+                            <span class="website-list-meta">Ekskluderet ${formatWebsiteDate(rule.created_at)}</span>
+                        </div>
+                        <div class="website-list-actions">
+                            <button class="btn btn-sm btn-outline-secondary website-action-btn" onclick="deleteWebsiteRule(${rule.id})">Fjern</button>
+                        </div>
+                    </div>`
+            );
+
+            const indexedCountBadge = document.getElementById('wsIndexedCount');
+            if (indexedCountBadge) indexedCountBadge.textContent = _wsIndexedPages.length;
+            document.getElementById('wsIncludeCount').textContent = r.include_rules.length;
+            document.getElementById('wsExcludeCount').textContent = r.exclude_rules.length;
+            _wsPagesLoaded = true;
+        })
+        .catch(() => {
+            if (!_wsPagesLoaded) {
+                ['wsIndexedModalList', 'wsIncludeList', 'wsExcludeList'].forEach(id => {
+                    const el = document.getElementById(id);
+                    el.innerHTML = '<div class="website-empty">Kunne ikke hente data.</div>';
+                });
+            }
+        });
+}
+
+function loadWebsiteStatus() {
+    fetch('/api/website/status')
+        .then(r => r.json())
+        .then(r => {
+            if (!r.success) return;
+            const job = r.job;
+
+            // Stats
+            document.getElementById('wsStat_pages').textContent =
+                (r.indexed_page_count || 0).toLocaleString('da-DK');
+
+            // "Sidst kørt": prefer the live job timestamp, fall back to the DB-persisted
+            // last_scraped_date so it survives server restarts.
+            const lastRunEl = document.getElementById('wsStat_lastRun');
+            const tsSource = job.finished_at || r.last_scraped_date;
+            if (tsSource) {
+                const d = new Date(tsSource);
+                lastRunEl.textContent =
+                    d.toLocaleString('da-DK', {day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit'});
+            } else {
+                lastRunEl.textContent = job.status === 'running' ? '—' : 'Aldrig';
+            }
+
+            // Badge: derive from actual indexed data, not just the in-memory job state.
+            // After a server restart _scrape_job resets to "idle" even if data exists.
+            const hasData = (r.indexed_page_count > 0) || (r.qdrant_chunk_count > 0);
+            let effectiveStatus = job.status;
+            if (effectiveStatus === 'idle' && hasData) effectiveStatus = 'done';
+
+            const badgeMap = {
+                idle:    ['bg-secondary', 'Ikke indekseret'],
+                running: ['bg-warning text-dark', 'Kører...'],
+                done:    ['bg-success', 'Indekseret'],
+                error:   ['bg-danger', 'Fejl'],
+            };
+            const [cls, label] = badgeMap[effectiveStatus] || ['bg-secondary', effectiveStatus];
+            const badge = document.getElementById('websiteChunkBadge');
+            badge.className = `badge ${cls}`;
+            badge.textContent = label;
+
+            // Buttons
+            const running = job.status === 'running';
+            ['btnStartScrape', 'btnReindex', 'btnClearWebsite'].forEach(id => {
+                document.getElementById(id).disabled = running;
+            });
+            document.getElementById('btnStartScrape').innerHTML = running
+                ? '<i class="fas fa-spinner fa-spin me-1"></i>Kører...'
+                : '<i class="fas fa-play me-1"></i>Start indeksering';
+
+            // Progress bar
+            const progSection = document.getElementById('wsProgressSection');
+            if (running) {
+                progSection.style.display = '';
+                if (job.phase === 'discovering') {
+                    document.getElementById('wsProgressBar').style.width = '8%';
+                    document.getElementById('wsProgressPct').textContent = '';
+                    document.getElementById('wsProgressLabel').textContent =
+                        `Finder sider via crawler... ${job.discovered_count || 0} fundet`;
+                } else if (job.pages_found > 0) {
+                    const pct = Math.round((job.pages_done / job.pages_found) * 100);
+                    document.getElementById('wsProgressBar').style.width = pct + '%';
+                    document.getElementById('wsProgressPct').textContent = pct + '%';
+                    document.getElementById('wsProgressLabel').textContent =
+                        `${job.pages_done} / ${job.pages_found} sider behandlet`;
+                } else {
+                    document.getElementById('wsProgressBar').style.width = '2%';
+                    document.getElementById('wsProgressPct').textContent = '';
+                    document.getElementById('wsProgressLabel').textContent = 'Henter sitemap...';
+                }
+                document.getElementById('wsCurrentUrl').textContent = job.current_url || '';
+            } else {
+                progSection.style.display = 'none';
+            }
+
+            // Fire a toast when the status transitions from running → done/error.
+            // _wsPoller is set while polling and cleared when scraping stops —
+            // using it as a "was running this session" flag avoids toasting on page load.
+            if (!running && _wsPoller) {
+                if (job.status === 'done') {
+                    createToast(`Indeksering fuldført! ${job.pages_done} sider og ${(job.chunks_total||0).toLocaleString('da-DK')} chunks er nu tilgængelige i vidensbasen.`, 'success');
+                } else if (job.status === 'error') {
+                    createToast(`Indeksering fejlede: ${job.error || 'Ukendt fejl'}`, 'danger');
+                }
+            }
+
+            // Poll while running
+            if (running && !_wsPoller) {
+                _wsPoller = setInterval(loadWebsiteStatus, 4000);
+            } else if (!running && _wsPoller) {
+                clearInterval(_wsPoller);
+                _wsPoller = null;
+            }
+
+            if (!running) {
+                loadWebsitePages();
+            }
+        })
+        .catch(() => {
+            document.getElementById('websiteChunkBadge').className = 'badge bg-secondary';
+            document.getElementById('websiteChunkBadge').textContent = 'Ukendt';
+        });
+}
+
+function startScrape(clearFirst) {
+    const modalId = clearFirst ? 'reindexModal' : 'startScrapeModal';
+    new bootstrap.Modal(document.getElementById(modalId)).show();
+}
+
+function _executeScrape(clearFirst) {
+    fetch('/api/website/scrape', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+        body: JSON.stringify({ clear: clearFirst }),
+    })
+    .then(r => r.json())
+    .then(r => {
+        if (r.success) {
+            createToast('Indeksering startet! Siden opdateres automatisk.', 'success');
+            _wsPagesLoaded = false;
+            setTimeout(loadWebsiteStatus, 1500);
+        } else {
+            createToast('Fejl: ' + r.message, 'danger');
+        }
+    })
+    .catch(() => createToast('Der opstod en fejl', 'danger'));
+}
+
+function clearWebsite() {
+    new bootstrap.Modal(document.getElementById('clearWebsiteModal')).show();
+}
+
+function _executeClearWebsite() {
+    fetch('/api/website/clear', {
+        method: 'DELETE',
+        headers: { 'X-CSRFToken': csrfToken },
+    })
+    .then(r => r.json())
+    .then(r => {
+        if (r.success) {
+            createToast(r.message, 'success');
+            loadWebsiteStatus();
+            loadWebsitePages();
+        } else {
+            createToast('Fejl: ' + r.message, 'danger');
+        }
+    })
+    .catch(() => createToast('Der opstod en fejl', 'danger'));
+}
+
+function addWebsitePage() {
+    const input = document.getElementById('wsIncludeUrl');
+    const url = input.value.trim();
+    if (!url) return;
+
+    fetch('/api/website/include', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+        body: JSON.stringify({ url }),
+    })
+    .then(r => r.json())
+    .then(r => {
+        if (r.success) {
+            createToast(r.message, 'success');
+            input.value = '';
+            loadWebsitePages();
+        } else {
+            createToast('Fejl: ' + r.message, 'danger');
+        }
+    })
+    .catch(() => createToast('Der opstod en fejl', 'danger'));
+}
+
+let _pendingExcludeUrl = null;
+
+function excludeWebsitePage(encodedUrl) {
+    _pendingExcludeUrl = decodeURIComponent(encodedUrl);
+    document.getElementById('excludePageUrl').textContent = _pendingExcludeUrl;
+    new bootstrap.Modal(document.getElementById('excludePageModal')).show();
+}
+
+function _executeExcludePage() {
+    if (!_pendingExcludeUrl) return;
+    const url = _pendingExcludeUrl;
+    fetch('/api/website/exclude', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+        body: JSON.stringify({ url }),
+    })
+    .then(r => r.json())
+    .then(r => {
+        if (r.success) {
+            createToast(r.message, 'success');
+            loadWebsitePages();
+            loadWebsiteStatus();
+        } else {
+            createToast('Fejl: ' + r.message, 'danger');
+        }
+    })
+    .catch(() => createToast('Der opstod en fejl', 'danger'));
+}
+
+function deleteWebsiteRule(ruleId) {
+    fetch(`/api/website/rules/${ruleId}`, {
+        method: 'DELETE',
+        headers: { 'X-CSRFToken': csrfToken },
+    })
+    .then(r => r.json())
+    .then(r => {
+        if (r.success) {
+            createToast(r.message, 'success');
+            loadWebsitePages();
+            loadWebsiteStatus();
+        } else {
+            createToast('Fejl: ' + r.message, 'danger');
+        }
+    })
+    .catch(() => createToast('Der opstod en fejl', 'danger'));
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadWebsiteStatus();
+    loadWebsitePages();
+    document.getElementById('wsIndexedSearch')?.addEventListener('input', renderIndexedPagesModal);
+    document.getElementById('wsIncludeUrl')?.addEventListener('keydown', event => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            addWebsitePage();
+        }
+    });
+});
+
+// ── Document management ───────────────────────────────────────────────────────
+let selectedFiles = [];
+let pendingDeleteId = null;
+let pendingRenameId = null;
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+function formatFileSize(bytes) {
+    if (!bytes || bytes === 0) return '0 KB';
+    if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(1) + ' GB';
+    if (bytes >= 1048576)    return (bytes / 1048576).toFixed(1) + ' MB';
+    if (bytes >= 1024)       return (bytes / 1024).toFixed(0) + ' KB';
+    return bytes + ' B';
+}
+function formatBytes(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+function escapeHtml(text) {
+    const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
+    return (text || '').replace(/[&<>"']/g, m => map[m]);
+}
+
+function renderStatusBadge(status) {
+    if (status === 'ready')
+        return '<span class="badge status-badge-ready">Klar</span>';
+    if (status === 'processing')
+        return '<span class="badge status-badge-processing"><i class="fas fa-spinner fa-spin me-1" style="font-size:.65rem;"></i>Behandler</span>';
+    return '<span class="badge status-badge-error">Fejl</span>';
+}
+
+// ── File selection ───────────────────────────────────────────────────────────
+function addFiles(newFiles) {
+    const allowedExt = ['pdf', 'txt'];
+    Array.from(newFiles).forEach(file => {
+        const ext = file.name.split('.').pop().toLowerCase();
+        if (!allowedExt.includes(ext)) {
+            createToast(`"${file.name}" er ikke understøttet (kun PDF og TXT)`, 'warning');
+            return;
+        }
+        if (file.size > 256 * 1024 * 1024) {
+            createToast(`"${file.name}" er for stor (maks 256 MB)`, 'warning');
+            return;
+        }
+        if (!selectedFiles.find(f => f.name === file.name && f.size === file.size)) {
+            selectedFiles.push(file);
+        }
+    });
+    renderFileQueue();
+}
+
+function removeFile(idx) {
+    selectedFiles.splice(idx, 1);
+    renderFileQueue();
+}
+
+function renderFileQueue() {
+    const queue = document.getElementById('fileQueue');
+    const btn = document.getElementById('startUploadBtn');
+    const btnCount = document.getElementById('uploadBtnCount');
+
+    if (selectedFiles.length === 0) {
+        queue.style.display = 'none';
+        btn.disabled = true;
+        btnCount.textContent = '';
+        return;
+    }
+
+    queue.style.display = 'block';
+    btn.disabled = false;
+    btnCount.textContent = `(${selectedFiles.length})`;
+
+    const icons = { pdf: '📄', txt: '📝' };
+    queue.innerHTML = selectedFiles.map((f, i) => {
+        const ext = f.name.split('.').pop().toLowerCase();
+        return `<div class="file-queue-item">
+            <span style="font-size:1.1rem;">${icons[ext] || '📄'}</span>
+            <span class="file-name" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</span>
+            <span class="file-size">${formatBytes(f.size)}</span>
+            <i class="fas fa-times remove-file" onclick="removeFile(${i})" style="cursor:pointer;"></i>
+        </div>`;
+    }).join('');
+}
+
+// ── Drop zone ────────────────────────────────────────────────────────────────
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+
+dropZone.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', () => { addFiles(fileInput.files); fileInput.value = ''; });
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    addFiles(e.dataTransfer.files);
+});
+
+document.getElementById('uploadModal').addEventListener('hidden.bs.modal', () => {
+    selectedFiles = [];
+    renderFileQueue();
+    const prog = document.getElementById('uploadProgress');
+    const bar = document.getElementById('uploadProgressBar');
+    prog.style.display = 'none';
+    bar.style.width = '0%';
+    bar.className = 'progress-bar bg-primary';
+    document.getElementById('startUploadBtn').disabled = true;
+    document.getElementById('cancelUploadBtn').textContent = 'Annuller';
+});
+
+// ── Sequential upload (one file per request) ─────────────────────────────────
+document.getElementById('startUploadBtn').addEventListener('click', async () => {
+    if (selectedFiles.length === 0) return;
+
+    const progressEl = document.getElementById('uploadProgress');
+    const bar = document.getElementById('uploadProgressBar');
+    const statusText = document.getElementById('uploadStatusText');
+    const countText = document.getElementById('uploadCountText');
+    const uploadBtn = document.getElementById('startUploadBtn');
+    const cancelBtn = document.getElementById('cancelUploadBtn');
+
+    uploadBtn.disabled = true;
+    progressEl.style.display = 'block';
+    cancelBtn.textContent = 'Luk';
+
+    const total = selectedFiles.length;
+    // Keep a snapshot of the names we're uploading so we can reconcile later
+    const uploadNames = selectedFiles.map(f => f.name);
+    let done = 0;
+    // Track which files got a confirmed response (success or HTTP error).
+    // Files that threw a network error are in a "maybe" state until reconcile.
+    const confirmedIds = new Set();
+    const hardFailed = new Set(); // HTTP-level failures only
+
+    for (const file of selectedFiles) {
+        statusText.textContent = `Uploader "${file.name}"…`;
+        countText.textContent = `${done} / ${total}`;
+        bar.style.width = `${Math.round((done / total) * 90) + 5}%`;
+
+        // Pause between uploads — gives the server time to handle each request
+        // cleanly while background processing threads are running.
+        if (done > 0) await new Promise(r => setTimeout(r, 1500));
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        try {
+            const resp = await fetch('/api/documents/upload', {
+                method: 'POST',
+                headers: { 'X-CSRFToken': csrfToken },
+                body: formData,
+            });
+
+            if (!resp.ok) {
+                let errMsg = null;
+                try { const errData = await resp.json(); errMsg = errData.message; } catch (_) {}
+                if (resp.status === 409) {
+                    createToast(errMsg || `"${file.name}" findes allerede i vidensbasen`, 'warning');
+                } else {
+                    console.error('Upload HTTP error:', resp.status);
+                    hardFailed.add(file.name);
+                }
+            } else {
+                const data = await resp.json();
+                if (data.success) {
+                    appendDocumentRow(data.document);
+                    hideEmptyState();
+                    confirmedIds.add(data.document.id);
+                    if (data.document.status === 'processing') {
+                        pollDocumentStatus(data.document.id);
+                    }
+                } else {
+                    hardFailed.add(file.name);
+                }
+            }
+        } catch (err) {
+            console.warn(`Network error uploading "${file.name}" — will reconcile:`, err);
+        }
+        done++;
+    }
+
+    // ── Final reconciliation ─────────────────────────────────────────────────
+    // Wait for the server to finish writing any in-flight uploads to the DB,
+    // then sync the document list to catch any files that actually made it
+    // through despite the network error.
+    statusText.textContent = 'Kontrollerer…';
+    bar.style.width = '95%';
+    await new Promise(r => setTimeout(r, 3000));
+
+    let actualFailed = hardFailed.size;
+    let syncData = null;
+
+    // Retry the reconciliation check up to 3 times in case the server is still busy
+    for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+            const syncResp = await fetch('/api/documents');
+            if (syncResp.ok) { syncData = await syncResp.json(); break; }
+        } catch (e) {
+            console.warn(`Reconciliation attempt ${attempt + 1} failed:`, e);
+            if (attempt < 2) await new Promise(r => setTimeout(r, 2000));
+        }
+    }
+
+    if (syncData) {
+        const allDocs = syncData.documents || [];
+        for (const name of uploadNames) {
+            if (hardFailed.has(name)) continue;
+
+            const match = allDocs
+                .filter(d => d.original_name === name)
+                .sort((a, b) => b.id - a.id)[0];
+
+            if (match) {
+                if (!confirmedIds.has(match.id)) {
+                    appendDocumentRow(match);
+                    hideEmptyState();
+                    if (match.status === 'processing') pollDocumentStatus(match.id);
+                }
+            } else {
+                actualFailed++;
+            }
+        }
+    } else {
+        // All reconciliation attempts failed — we can't determine the real state.
+        // Show a neutral message rather than falsely reporting all as failed.
+        console.warn('Could not verify upload results after 3 attempts');
+        actualFailed = -1; // sentinel: unknown
+    }
+
+    bar.style.width = '100%';
+    countText.textContent = `${total} / ${total}`;
+
+    if (actualFailed === -1) {
+        // Unknown state — server couldn't be reached for verification
+        bar.className = 'progress-bar bg-warning';
+        statusText.textContent = 'Upload fuldført — genindlæs siden for at se status';
+    } else {
+        const ok = total - actualFailed;
+        bar.className = actualFailed === total ? 'progress-bar bg-danger'
+            : actualFailed > 0 ? 'progress-bar bg-warning'
+            : 'progress-bar bg-success';
+        statusText.textContent = ok > 0
+            ? `${ok} fil${ok !== 1 ? 'er' : ''} uploadet${actualFailed > 0 ? `, ${actualFailed} fejlede` : ''}`
+            : `Alle ${actualFailed} filer fejlede`;
+        if (ok > 0) {
+            createToast(`${ok} dokument${ok !== 1 ? 'er' : ''} uploadet og behandles`, 'success');
+            bootstrap.Modal.getInstance(document.getElementById('uploadModal')).hide();
+        }
+    }
+
+    selectedFiles = [];
+    renderFileQueue();
+});
+
+// ── Append new row ───────────────────────────────────────────────────────────
+function appendDocumentRow(doc) {
+    const tbody = document.getElementById('documentsTableBody');
+    if (!tbody) return; // should never happen — table is always in DOM
+    // Don't add a duplicate row if this document is already in the table
+    if (tbody.querySelector(`tr[data-doc-id="${doc.id}"]`)) return;
+    const iconColor = doc.file_type === 'pdf' ? '#e74c3c' : 'var(--text-muted)';
+    const row = document.createElement('tr');
+    row.dataset.docId = doc.id;
+    row.innerHTML = `
+        <td class="select-col"><input type="checkbox" class="form-check-input doc-checkbox" value="${doc.id}"></td>
+        <td>
+            <i class="fas fa-file-${doc.file_type === 'pdf' ? 'pdf' : 'alt'} me-2" style="color:${iconColor};"></i>
+            <span class="fw-medium doc-name-display" id="name-${doc.id}">${escapeHtml(doc.original_name)}</span>
+        </td>
+        <td><span class="doc-type-badge">${doc.file_type.toUpperCase()}</span></td>
+        <td class="text-muted">${formatFileSize(doc.file_size)}</td>
+        <td class="text-muted" style="white-space:nowrap;">${doc.created_at}</td>
+        <td id="status-${doc.id}">${renderStatusBadge(doc.status)}</td>
+        <td class="text-end" style="white-space:nowrap;">
+            <button class="btn btn-sm btn-outline-secondary rename-doc-btn me-1"
+                    data-doc-id="${doc.id}" data-doc-name="${escapeHtml(doc.original_name)}" title="Omdøb">
+                <i class="fas fa-pen"></i>
+            </button>
+            <button class="btn btn-sm btn-outline-danger delete-doc-btn" data-doc-id="${doc.id}" title="Slet">
+                <i class="fas fa-trash"></i>
+            </button>
+        </td>`;
+    tbody.prepend(row);
+    row.querySelector('.doc-checkbox').addEventListener('change', updateSelection);
+    row.querySelector('.delete-doc-btn').addEventListener('click', handleDeleteClick);
+    row.querySelector('.rename-doc-btn').addEventListener('click', handleRenameClick);
+}
+
+function hideEmptyState() {
+    const empty = document.getElementById('emptyState');
+    if (empty) empty.style.display = 'none';
+    const wrapper = document.getElementById('documentsTableWrapper');
+    if (wrapper) wrapper.style.display = '';
+}
+
+// ── Poll processing docs ─────────────────────────────────────────────────────
+function pollDocumentStatus(docId, attempts = 0) {
+    if (attempts > 80) return;
+    setTimeout(async () => {
+        try {
+            const resp = await fetch('/api/documents');
+            const data = await resp.json();
+            const doc = data.documents.find(d => d.id === docId);
+            if (!doc) return;
+            const statusEl = document.getElementById(`status-${docId}`);
+            if (statusEl) statusEl.innerHTML = renderStatusBadge(doc.status);
+            if (doc.status === 'processing') {
+                pollDocumentStatus(docId, attempts + 1);
+            } else if (doc.status === 'ready') {
+                createToast(`"${doc.original_name}" er klar`, 'success');
+            } else if (doc.status === 'error') {
+                createToast(`Fejl med "${doc.original_name}": ${doc.error_message || 'Ukendt fejl'}`, 'danger');
+            }
+        } catch (_) {}
+    }, 3000);
+}
+
+// Poll any already-processing docs on page load
+document.querySelectorAll('tr[data-doc-id]').forEach(row => {
+    const statusCell = row.querySelector('td:nth-child(7)');
+    if (statusCell && statusCell.querySelector('.fa-spinner')) {
+        pollDocumentStatus(parseInt(row.dataset.docId));
+    }
+});
+
+// ── Single delete ────────────────────────────────────────────────────────────
+function handleDeleteClick(e) {
+    pendingDeleteId = parseInt(e.currentTarget.dataset.docId);
+    new bootstrap.Modal(document.getElementById('deleteModal')).show();
+}
+
+document.querySelectorAll('.delete-doc-btn').forEach(btn => btn.addEventListener('click', handleDeleteClick));
+
+document.getElementById('confirmDeleteBtn').addEventListener('click', async () => {
+    if (!pendingDeleteId) return;
+    bootstrap.Modal.getInstance(document.getElementById('deleteModal')).hide();
+    try {
+        const resp = await fetch(`/api/documents/${pendingDeleteId}`, {
+            method: 'DELETE', headers: { 'X-CSRFToken': csrfToken },
+        });
+        const data = await resp.json();
+        if (data.success) {
+            document.querySelector(`tr[data-doc-id="${pendingDeleteId}"]`)?.remove();
+            createToast('Dokument slettet', 'success');
+            checkEmptyTable();
+        } else {
+            createToast('Sletning fejlede', 'danger');
+        }
+    } catch (_) { createToast('Netværksfejl', 'danger'); }
+    pendingDeleteId = null;
+});
+
+// ── Rename ───────────────────────────────────────────────────────────────────
+function handleRenameClick(e) {
+    pendingRenameId = parseInt(e.currentTarget.dataset.docId);
+    const currentName = e.currentTarget.dataset.docName || '';
+    document.getElementById('renameInput').value = currentName;
+    const modal = new bootstrap.Modal(document.getElementById('renameModal'));
+    modal.show();
+    setTimeout(() => {
+        const inp = document.getElementById('renameInput');
+        inp.focus();
+        inp.select();
+    }, 300);
+}
+
+document.querySelectorAll('.rename-doc-btn').forEach(btn => btn.addEventListener('click', handleRenameClick));
+
+document.getElementById('renameInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('confirmRenameBtn').click();
+});
+
+document.getElementById('confirmRenameBtn').addEventListener('click', async () => {
+    if (!pendingRenameId) return;
+    const newName = document.getElementById('renameInput').value.trim();
+    if (!newName) { createToast('Navn må ikke være tomt', 'warning'); return; }
+
+    bootstrap.Modal.getInstance(document.getElementById('renameModal')).hide();
+    try {
+        const resp = await fetch(`/api/documents/${pendingRenameId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+            body: JSON.stringify({ name: newName }),
+        });
+        const data = await resp.json();
+        if (data.success) {
+            const nameEl = document.getElementById(`name-${pendingRenameId}`);
+            if (nameEl) nameEl.textContent = newName;
+            const renameBtn = document.querySelector(`.rename-doc-btn[data-doc-id="${pendingRenameId}"]`);
+            if (renameBtn) renameBtn.dataset.docName = newName;
+            createToast('Navn opdateret', 'success');
+        } else {
+            createToast(data.message || 'Omdøbning fejlede', 'danger');
+        }
+    } catch (_) { createToast('Netværksfejl', 'danger'); }
+    pendingRenameId = null;
+});
+
+// ── Batch selection / delete ─────────────────────────────────────────────────
+function updateSelection() {
+    const checked = document.querySelectorAll('.doc-checkbox:checked').length;
+    document.getElementById('batchToolbar').classList.toggle('visible', checked > 0);
+    document.getElementById('selectedCount').textContent = `${checked} valgt`;
+}
+
+document.addEventListener('change', e => {
+    if (e.target.id === 'selectAll') {
+        document.querySelectorAll('.doc-checkbox').forEach(cb => cb.checked = e.target.checked);
+        updateSelection();
+    } else if (e.target.classList.contains('doc-checkbox')) {
+        updateSelection();
+        const all = document.querySelectorAll('.doc-checkbox').length;
+        const chk = document.querySelectorAll('.doc-checkbox:checked').length;
+        document.getElementById('selectAll').checked = all === chk && all > 0;
+    }
+});
+
+document.getElementById('clearSelectionBtn').addEventListener('click', () => {
+    document.querySelectorAll('.doc-checkbox').forEach(cb => cb.checked = false);
+    document.getElementById('selectAll').checked = false;
+    updateSelection();
+});
+
+document.getElementById('batchDeleteBtn').addEventListener('click', () => {
+    document.getElementById('batchDeleteCount').textContent =
+        document.querySelectorAll('.doc-checkbox:checked').length;
+    new bootstrap.Modal(document.getElementById('batchDeleteModal')).show();
+});
+
+document.getElementById('confirmBatchDeleteBtn').addEventListener('click', async () => {
+    const ids = Array.from(document.querySelectorAll('.doc-checkbox:checked')).map(cb => parseInt(cb.value));
+    bootstrap.Modal.getInstance(document.getElementById('batchDeleteModal')).hide();
+    try {
+        const resp = await fetch('/api/documents/batch-delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+            body: JSON.stringify({ ids }),
+        });
+        const data = await resp.json();
+        if (data.success) {
+            ids.forEach(id => document.querySelector(`tr[data-doc-id="${id}"]`)?.remove());
+            document.getElementById('selectAll').checked = false;
+            updateSelection();
+            createToast(`${data.deleted} dokument${data.deleted !== 1 ? 'er' : ''} slettet`, 'success');
+            checkEmptyTable();
+        } else {
+            createToast(data.message || 'Sletning fejlede', 'danger');
+        }
+    } catch (_) { createToast('Netværksfejl', 'danger'); }
+});
+
+function checkEmptyTable() {
+    if (document.querySelectorAll('#documentsTableBody tr').length === 0) {
+        document.getElementById('documentsTableWrapper').style.display = 'none';
+        document.getElementById('emptyState').style.display = '';
+    }
+}
+
+// ── Scraping modal confirm buttons ───────────────────────────────────────────
+document.getElementById('confirmStartScrapeBtn').addEventListener('click', () => {
+    bootstrap.Modal.getInstance(document.getElementById('startScrapeModal')).hide();
+    _executeScrape(false);
+});
+
+document.getElementById('confirmReindexBtn').addEventListener('click', () => {
+    bootstrap.Modal.getInstance(document.getElementById('reindexModal')).hide();
+    _executeScrape(true);
+});
+
+document.getElementById('confirmClearWebsiteBtn').addEventListener('click', () => {
+    bootstrap.Modal.getInstance(document.getElementById('clearWebsiteModal')).hide();
+    _executeClearWebsite();
+});
+
+document.getElementById('confirmExcludePageBtn').addEventListener('click', () => {
+    bootstrap.Modal.getInstance(document.getElementById('excludePageModal')).hide();
+    _executeExcludePage();
+});
+</script>
+{% endblock %}

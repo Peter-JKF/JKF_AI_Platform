@@ -1,0 +1,210 @@
+{% extends "base.html" %}
+{% block title %}Indstillinger – JKF{% endblock %}
+{% block page_title %}Indstillinger{% endblock %}
+
+{% block main_content %}
+<form method="POST" action="{{ url_for('settings') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2 class="mb-1">Chatbot indstillinger</h2>
+            <p class="text-muted mb-0">Konfigurer JKF chatbottens udseende og adfærd</p>
+        </div>
+        <button type="submit" class="btn btn-primary px-4">
+            <i class="fas fa-save me-2"></i>Gem indstillinger
+        </button>
+    </div>
+    <div class="row g-4">
+
+        <!-- Generelle indstillinger (left) -->
+        <div class="col-lg-6">
+            <div class="card h-100">
+                <div class="card-header"><h5 class="mb-0">Generelle indstillinger</h5></div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label class="form-label">Chatbot navn</label>
+                        <input type="text" name="chatbot_name" class="form-control" value="{{ s.chatbot_name }}">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Velkomstbesked</label>
+                        <textarea name="welcome_message" class="form-control" rows="2">{{ s.welcome_message }}</textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Disclaimer tekst</label>
+                        <input type="text" name="disclaimer_text" class="form-control" value="{{ s.disclaimer_text }}">
+                    </div>
+                    <div class="row">
+                        <div class="col-6 mb-3">
+                            <label class="form-label">Primær farve</label>
+                            <div class="input-group">
+                                <input type="color" name="primary_color" class="form-control form-control-color"
+                                       value="{{ s.primary_color }}" title="Vælg farve">
+                                <input type="text" class="form-control" value="{{ s.primary_color }}"
+                                       oninput="document.querySelector('[name=primary_color]').value=this.value">
+                            </div>
+                        </div>
+                        <div class="col-6 mb-3">
+                            <label class="form-label">Toggle farve</label>
+                            <div class="input-group">
+                                <input type="color" name="toggle_color" class="form-control form-control-color"
+                                       value="{{ s.toggle_color }}" title="Vælg farve">
+                                <input type="text" class="form-control" value="{{ s.toggle_color }}"
+                                       oninput="document.querySelector('[name=toggle_color]').value=this.value">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Logo URL</label>
+                        <input type="url" name="logo_url" class="form-control" value="{{ s.logo_url or '' }}"
+                               placeholder="https://...">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Website URL
+                            <small class="text-muted">(bruges til web-scraping)</small>
+                        </label>
+                        <input type="url" name="website_url" class="form-control"
+                               value="{{ s.website_url or '' }}" placeholder="https://jkf.dk">
+                        {% if s.last_scraped_date %}
+                        <div class="text-muted small mt-1">
+                            <i class="fas fa-info-circle me-1"></i>Sidst scraped: {{ s.last_scraped_date|danish_datetime }}
+                        </div>
+                        {% endif %}
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">AI model</label>
+                        <select name="model" class="form-select">
+                            <option value="gpt-5.4-mini" {{ 'selected' if s.model == 'gpt-5.4-mini' or not s.model }}>gpt-5.4-mini (standard)</option>
+                            <option value="gpt-5.4-nano" {{ 'selected' if s.model == 'gpt-5.4-nano' }}>gpt-5.4-nano</option>
+                            <option value="gpt-4o-mini" {{ 'selected' if s.model == 'gpt-4o-mini' }}>gpt-4o-mini</option>
+                        </select>
+                    </div>
+                    <div class="mb-0">
+                        <label class="form-label">System prompt</label>
+                        <textarea name="system_prompt" class="form-control font-monospace" rows="24"
+                                  style="font-size:0.78rem; resize:vertical;">{{ s.system_prompt or DEFAULT_SYSTEM_PROMPT }}</textarea>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right column: Hurtige spørgsmål + Embed-kode -->
+        <div class="col-lg-6 d-flex flex-column gap-4">
+
+            <!-- Hurtige spørgsmål -->
+            <div class="card">
+                <div class="card-header"><h5 class="mb-0">Hurtige spørgsmål</h5></div>
+                <div class="card-body">
+                    <p class="text-muted mb-3">Ét spørgsmål pr. linje. Vises som knapper til brugeren ved start.</p>
+                    <textarea name="quick_questions" class="form-control" rows="6"
+                              placeholder="Hvad er JKFs åbningstider?&#10;Hvordan kontakter jeg JKF?&#10;Hvad tilbyder JKF?">{% if s.quick_questions %}{% for q in s.quick_questions | from_json %}{{ q }}
+{% endfor %}{% endif %}</textarea>
+                </div>
+            </div>
+
+            <!-- Demo side -->
+            <div class="card">
+                <div class="card-header"><h5 class="mb-0">Demo side</h5></div>
+                <div class="card-body d-flex align-items-center justify-content-between gap-3">
+                    <p class="text-muted mb-0" style="font-size:.875rem;">
+                        Se og test chatbotten på en live demo-side.
+                    </p>
+                    <a href="{{ url_for('chatbot_demo') }}" target="_blank" class="btn btn-outline-primary btn-sm text-nowrap">
+                        <i class="fas fa-external-link-alt me-2"></i>Åbn demo
+                    </a>
+                </div>
+            </div>
+
+            <!-- Medarbejder testside -->
+            <div class="card">
+                <div class="card-header"><h5 class="mb-0">Medarbejder testside</h5></div>
+                <div class="card-body d-flex align-items-center justify-content-between gap-3">
+                    <p class="text-muted mb-0" style="font-size:.875rem;">
+                        Del dette link med medarbejdere så de kan teste og træne chatbotten.
+                    </p>
+                    <div class="d-flex gap-2 flex-shrink-0">
+                        <button type="button" class="btn btn-outline-secondary btn-sm text-nowrap" id="copyTestLinkBtn" title="Kopiér link">
+                            <i class="fas fa-copy me-1"></i>Kopiér link
+                        </button>
+                        <a href="{{ url_for('employee_test') }}" target="_blank" class="btn btn-outline-primary btn-sm text-nowrap">
+                            <i class="fas fa-external-link-alt me-2"></i>Åbn
+                        </a>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Embed-kode -->
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">Embed-kode</h5>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="copyEmbedBtn" title="Kopiér kode">
+                        <i class="fas fa-copy me-1"></i>Kopiér
+                    </button>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted mb-3">Indsæt denne kode på JKFs hjemmeside lige inden <code>&lt;/body&gt;</code>:</p>
+                    <pre class="bg-light p-3 rounded mb-0" id="embedCodeBlock" style="font-size: 0.8rem; overflow-x: auto;"><code>&lt;!-- JKF Chatbot --&gt;
+&lt;script&gt;
+    window.CHATBOT_BASE_URL = '{{ request.host_url.rstrip('/') }}';
+&lt;/script&gt;
+&lt;script src="{{ request.host_url.rstrip('/') }}/static/chatbot-embed.js" defer&gt;&lt;/script&gt;</code></pre>
+                </div>
+            </div>
+
+        </div>
+
+    </div>
+</form>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Sync color text inputs with color pickers
+document.querySelectorAll('input[type="color"]').forEach(picker => {
+    const textInput = picker.nextElementSibling;
+    picker.addEventListener('input', () => { textInput.value = picker.value; });
+    textInput.addEventListener('input', () => { picker.value = textInput.value; });
+});
+
+function copyText(text) {
+    const el = document.createElement('textarea');
+    el.value = text;
+    el.style.cssText = 'position:fixed;top:0;left:0;opacity:0;pointer-events:none;';
+    document.body.appendChild(el);
+    el.focus(); el.select();
+    try { document.execCommand('copy'); } catch(e) {}
+    document.body.removeChild(el);
+    return Promise.resolve();
+}
+
+function flashBtn(btn, successClass) {
+    const original = btn.innerHTML;
+    btn.innerHTML = '<i class="fas fa-check me-1"></i>Kopieret!';
+    btn.classList.replace(successClass, 'btn-success');
+    setTimeout(() => { btn.innerHTML = original; btn.classList.replace('btn-success', successClass); }, 2000);
+}
+
+// Copy test page link
+document.getElementById('copyTestLinkBtn').addEventListener('click', function () {
+    copyText(window.location.origin + '/test')
+        .then(() => flashBtn(this, 'btn-outline-secondary'))
+        .catch(() => createToast('Kunne ikke kopiere til udklipsholder', 'warning'));
+});
+
+// Copy embed code
+document.getElementById('copyEmbedBtn').addEventListener('click', function () {
+    const codeEl = document.querySelector('#embedCodeBlock code');
+    copyText(codeEl ? codeEl.innerText : '').then(() => {
+        const btn = this;
+        const original = btn.innerHTML;
+        btn.innerHTML = '<i class="fas fa-check me-1"></i>Kopieret!';
+        btn.classList.replace('btn-outline-secondary', 'btn-success');
+        setTimeout(() => {
+            btn.innerHTML = original;
+            btn.classList.replace('btn-success', 'btn-outline-secondary');
+        }, 2000);
+    }).catch(() => {
+        createToast('Kunne ikke kopiere til udklipsholder', 'warning');
+    });
+});
+</script>
+{% endblock %}

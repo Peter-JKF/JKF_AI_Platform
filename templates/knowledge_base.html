@@ -1,0 +1,440 @@
+{% extends "base.html" %}
+{% block title %}Test & Træning – JKF{% endblock %}
+{% block page_title %}Test & Træning{% endblock %}
+
+{% block extra_css %}
+<style>
+    .step-number {
+        width: 32px; height: 32px; min-width: 32px; border-radius: 50%;
+        background: var(--primary); color: white;
+        display: flex; align-items: center; justify-content: center;
+        font-weight: 600; font-size: 0.875rem;
+    }
+    .kb-question { font-weight: 600; color: var(--text-primary); }
+    .kb-answer { color: var(--text-secondary); max-height: 80px; overflow-y: auto; font-size: 0.875rem; }
+</style>
+{% endblock %}
+
+{% block main_content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h2 class="mb-1">Test & Træning</h2>
+        <p class="text-muted mb-0">Træn chatbotten og test dens svar i realtid</p>
+    </div>
+</div>
+
+<!-- Training Module Section -->
+<div class="row g-4 mb-4">
+    <div class="col-lg-5">
+        <div class="card h-100">
+            <div class="card-body">
+                <h4 class="mb-3">
+                    <i class="fas fa-graduation-cap me-2 text-primary"></i>Træn chatbotten
+                </h4>
+                <p class="text-muted mb-4">Forbedre chatbottens svar ved at teste og rette dem i realtid</p>
+
+                <div class="d-flex flex-column gap-4 mb-4">
+                    <div class="d-flex gap-3">
+                        <div class="step-number">1</div>
+                        <div>
+                            <strong>Chat med botten</strong>
+                            <p class="mb-0 text-muted" style="font-size: 0.875rem;">Stil spørgsmål til chatbotten for at teste dens svar</p>
+                        </div>
+                    </div>
+                    <div class="d-flex gap-3">
+                        <div class="step-number">2</div>
+                        <div>
+                            <strong>Ret svarene</strong>
+                            <p class="mb-0 text-muted" style="font-size: 0.875rem;">Klik på <i class="fas fa-edit text-primary"></i> ved svarene for at rette dem</p>
+                        </div>
+                    </div>
+                    <div class="d-flex gap-3">
+                        <div class="step-number">3</div>
+                        <div>
+                            <strong>Gem og sync</strong>
+                            <p class="mb-0 text-muted" style="font-size: 0.875rem;">Rettelser gemmes. Tryk på <strong>"Synkroniser til vidensbase"</strong> for at aktivere ændringerne</p>
+                        </div>
+                    </div>
+                </div>
+
+                <button class="btn btn-primary btn-lg w-100 mb-3" onclick="syncToQdrant()">
+                    <i class="fas fa-sync me-2"></i>Synkroniser til vidensbase
+                </button>
+
+                <div class="alert alert-info mb-3" style="font-size: 0.8125rem;">
+                    <i class="fas fa-info-circle me-1"></i> Træningssamtaler gemmes ikke i samtalehistorikken
+                </div>
+
+                <div class="p-3 rounded" style="background: var(--bg-page);">
+                    <p class="text-muted mb-0" style="font-size: 0.875rem;">
+                        <i class="fas fa-plus-circle text-primary me-1"></i>
+                        Du kan også manuelt tilføje spørgsmål med <strong>"Tilføj nyt spørgsmål"</strong> knappen nedenfor
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-7">
+        <div class="card h-100 p-0" style="overflow: hidden;">
+            <div class="card-body p-0 h-100">
+                <div style="height: 100%; min-height: 480px; background: var(--bg-page); border-radius: var(--radius-lg); overflow: hidden;">
+                    <iframe
+                        id="trainingChatbot"
+                        src="{{ url_for('training_chatbot_page') }}"
+                        frameborder="0"
+                        allow="clipboard-write"
+                        style="width: 100%; height: 100%; min-height: 480px; border: none; border-radius: var(--radius-lg);">
+                    </iframe>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Knowledge Base Management Section -->
+<div class="card">
+    <div class="card-header">
+        <div class="d-flex align-items-center flex-wrap gap-3 w-100">
+            <h5 class="mb-0"><i class="fas fa-database me-2"></i>Q&A Vidensbase</h5>
+            <div class="d-flex align-items-center gap-3" style="margin-left: auto;">
+                <button class="btn btn-primary" onclick="showAddModal()">
+                    <i class="fas fa-plus me-2"></i>Tilføj nyt spørgsmål
+                </button>
+                <div class="input-group" style="width: 280px;">
+                    <span class="input-group-text"><i class="fas fa-search"></i></span>
+                    <input type="text" class="form-control" id="searchInput" placeholder="Søg i spørgsmål/svar...">
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="card-body">
+        <div id="loadingSpinner" class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Indlæser...</span>
+            </div>
+            <p class="mt-2 text-muted">Indlæser knowledge base...</p>
+        </div>
+        <div id="kbContent" style="display: none;">
+            <div class="table-responsive">
+                <table class="table table-hover" id="kbTable">
+                    <thead>
+                        <tr>
+                            <th style="width: 35%;">Spørgsmål</th>
+                            <th style="width: 50%;">Svar</th>
+                            <th style="width: 15%;"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="kbTableBody"></tbody>
+                </table>
+            </div>
+            <div id="emptyState" class="empty-state" style="display: none;">
+                <div class="empty-state-icon"><i class="fas fa-inbox"></i></div>
+                <div class="empty-state-title">Ingen spørgsmål fundet</div>
+                <div class="empty-state-text">Tilføj dit første spørgsmål for at træne chatbotten</div>
+                <button class="btn btn-primary mt-3" onclick="showAddModal()">
+                    <i class="fas fa-plus me-2"></i>Tilføj spørgsmål
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add/Edit Modal -->
+<div class="modal fade" id="kbModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="modalTitle">Tilføj spørgsmål</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="kbForm">
+                    <input type="hidden" id="entryId">
+                    <div class="mb-3">
+                        <label for="kbQuestion" class="form-label">Spørgsmål</label>
+                        <input type="text" class="form-control" id="kbQuestion" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="kbAnswer" class="form-label">Svar</label>
+                        <textarea class="form-control" id="kbAnswer" rows="8" required></textarea>
+                        <small class="form-text text-muted">Tip: Brug formatet [link tekst](url) for at tilføje links</small>
+                    </div>
+                    <div class="mb-3">
+                        <label for="kbCategory" class="form-label">Kategori <span class="text-muted">(valgfri)</span></label>
+                        <input type="text" class="form-control" id="kbCategory" placeholder="F.eks. Åbningstider, Kontakt">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Annuller</button>
+                <button type="button" class="btn btn-primary" onclick="saveEntry()">
+                    <i class="fas fa-save me-2"></i>Gem
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Confirmation Modal -->
+<div class="modal fade" id="deleteModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Bekræft sletning</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>Er du sikker på, at du vil slette dette spørgsmål?</p>
+                <input type="hidden" id="deleteEntryId">
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Annuller</button>
+                <button type="button" class="btn btn-danger" onclick="confirmDelete()">
+                    <i class="fas fa-trash me-2"></i>Slet
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Training / Edit Response Modal -->
+<div class="modal fade" id="trainingModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Ret chatbot-svar</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="trainingForm">
+                    <div class="mb-3">
+                        <label for="trainingQuestion" class="form-label">Spørgsmål</label>
+                        <input type="text" class="form-control" id="trainingQuestion" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="trainingAnswer" class="form-label">Svar</label>
+                        <textarea class="form-control" id="trainingAnswer" rows="8" required></textarea>
+                        <small class="form-text text-muted">Tip: Brug formatet [link tekst](url) for at tilføje links</small>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Annuller</button>
+                <button type="button" class="btn btn-primary" onclick="saveTrainingEntry()">
+                    <i class="fas fa-save me-2"></i>Gem i vidensbase
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let allEntries = [];
+let currentEntryId = null;
+
+$(document).ready(function() {
+    loadKnowledgeBase();
+
+    $('#searchInput').on('input', function() {
+        filterEntries($(this).val());
+    });
+
+    // Receive edit-response events from the training chatbot iframe
+    window.addEventListener('message', function(event) {
+        if (event.data && event.data.type === 'edit_response') {
+            const answer = event.data.answer || event.data.response || event.data.botResponse || event.data.content || '';
+            showTrainingModal(event.data.question, answer);
+        }
+    });
+});
+
+function showTrainingModal(question, answer) {
+    let formatted = answer || '';
+    formatted = formatted.replace(/<\/p>/gi, '\n\n').replace(/<p[^>]*>/gi, '');
+    formatted = formatted.replace(/<\/div>/gi, '\n').replace(/<div[^>]*>/gi, '');
+    formatted = formatted.replace(/<br\s*\/?>/gi, '\n');
+    formatted = formatted.replace(/<\/li>/gi, '\n').replace(/<li[^>]*>/gi, '');
+    formatted = formatted.replace(/<\/?ul[^>]*>/gi, '\n').replace(/<\/?ol[^>]*>/gi, '\n');
+    formatted = formatted.replace(/<a\s+(?:[^>]*?\s+)?href=(["'])(.*?)\1[^>]*>(.*?)<\/a>/gi, '[$3]($2)');
+    formatted = formatted.replace(/<[^>]+>/g, '');
+    const tmp = document.createElement('div');
+    tmp.innerHTML = formatted;
+    formatted = (tmp.textContent || tmp.innerText || formatted).replace(/\n{3,}/g, '\n\n').trim();
+
+    $('#trainingQuestion').val(question || '');
+    $('#trainingAnswer').val(formatted);
+    $('#trainingModal').modal('show');
+}
+
+function saveTrainingEntry() {
+    const question = $('#trainingQuestion').val().trim();
+    const answer = $('#trainingAnswer').val().trim();
+    if (!question || !answer) { createToast('Udfyld venligst både spørgsmål og svar', 'warning'); return; }
+
+    $.ajax({
+        url: '/api/kb',
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify({ question, answer }),
+        success: function(r) {
+            if (r.success) {
+                createToast('Spørgsmål tilføjet! Husk at trykke på "Synkroniser til vidensbase"', 'success');
+                $('#trainingModal').modal('hide');
+                loadKnowledgeBase();
+            } else {
+                createToast('Fejl: ' + r.message, 'danger');
+            }
+        },
+        error: function() { createToast('Der opstod en fejl', 'danger'); }
+    });
+}
+
+function loadKnowledgeBase() {
+    $('#loadingSpinner').show();
+    $('#kbContent').hide();
+    $.ajax({
+        url: '/api/kb',
+        method: 'GET',
+        success: function(r) {
+            if (r.success) { allEntries = r.entries; displayEntries(allEntries); }
+            else { createToast('Fejl ved indlæsning', 'danger'); }
+        },
+        error: function() { createToast('Fejl ved indlæsning', 'danger'); },
+        complete: function() { $('#loadingSpinner').hide(); $('#kbContent').show(); }
+    });
+}
+
+function displayEntries(entries) {
+    const tbody = $('#kbTableBody');
+    tbody.empty();
+    if (entries.length === 0) { $('#kbTable').hide(); $('#emptyState').show(); return; }
+    $('#kbTable').show(); $('#emptyState').hide();
+    entries.forEach(function(e) {
+        const syncBadge = e.qdrant_synced
+            ? '<span class="badge bg-success">Synkroniseret</span>'
+            : '<span class="badge bg-warning text-dark">Ikke synkroniseret</span>';
+        tbody.append(`
+            <tr>
+                <td class="kb-question">${escapeHtml(e.question)}</td>
+                <td class="kb-answer">${formatAnswer(e.answer)}</td>
+                <td class="text-end" style="white-space: nowrap;">
+                    ${syncBadge}
+                    <button class="btn btn-sm btn-outline-primary ms-1" onclick="editEntry(${e.id})" title="Rediger"><i class="fas fa-edit"></i></button>
+                    <button class="btn btn-sm btn-outline-danger ms-1" onclick="deleteEntry(${e.id})" title="Slet"><i class="fas fa-trash"></i></button>
+                </td>
+            </tr>
+        `);
+    });
+}
+
+function filterEntries(term) {
+    if (!term) { displayEntries(allEntries); return; }
+    const t = term.toLowerCase();
+    displayEntries(allEntries.filter(e => e.question.toLowerCase().includes(t) || e.answer.toLowerCase().includes(t)));
+}
+
+function showAddModal() {
+    currentEntryId = null;
+    $('#modalTitle').text('Tilføj spørgsmål');
+    $('#entryId').val('');
+    $('#kbQuestion').val('');
+    $('#kbAnswer').val('');
+    $('#kbCategory').val('');
+    $('#kbModal').modal('show');
+}
+
+function editEntry(entryId) {
+    const e = allEntries.find(x => x.id === entryId);
+    if (!e) return;
+    currentEntryId = entryId;
+    $('#modalTitle').text('Rediger spørgsmål');
+    $('#entryId').val(entryId);
+    $('#kbQuestion').val(e.question);
+    $('#kbAnswer').val(e.answer);
+    $('#kbCategory').val(e.category || '');
+    $('#kbModal').modal('show');
+}
+
+function saveEntry() {
+    const entryId = $('#entryId').val();
+    const question = $('#kbQuestion').val().trim();
+    const answer = $('#kbAnswer').val().trim();
+    const category = $('#kbCategory').val().trim();
+    if (!question || !answer) { createToast('Udfyld venligst både spørgsmål og svar', 'warning'); return; }
+
+    const url = entryId ? `/api/kb/${entryId}` : '/api/kb';
+    const method = entryId ? 'PUT' : 'POST';
+    $.ajax({
+        url, method,
+        contentType: 'application/json',
+        data: JSON.stringify({ question, answer, category }),
+        success: function(r) {
+            if (r.success) {
+                createToast(entryId ? 'Spørgsmål opdateret!' : 'Spørgsmål tilføjet!', 'success');
+                $('#kbModal').modal('hide');
+                loadKnowledgeBase();
+            } else {
+                createToast('Fejl: ' + r.message, 'danger');
+            }
+        },
+        error: function() { createToast('Der opstod en fejl', 'danger'); }
+    });
+}
+
+function deleteEntry(entryId) {
+    $('#deleteEntryId').val(entryId);
+    $('#deleteModal').modal('show');
+}
+
+function confirmDelete() {
+    const entryId = $('#deleteEntryId').val();
+    $.ajax({
+        url: `/api/kb/${entryId}`,
+        method: 'DELETE',
+        success: function(r) {
+            if (r.success) {
+                createToast('Spørgsmål slettet!', 'success');
+                $('#deleteModal').modal('hide');
+                loadKnowledgeBase();
+            } else {
+                createToast('Fejl: ' + r.message, 'danger');
+            }
+        },
+        error: function() { createToast('Der opstod en fejl', 'danger'); }
+    });
+}
+
+function syncToQdrant() {
+    createToast('Synkroniserer til vidensbase...', 'info');
+    $.ajax({
+        url: '/api/kb/sync',
+        method: 'POST',
+        contentType: 'application/json',
+        success: function(r) {
+            if (r.success) {
+                createToast(r.message || 'Synkronisering til vidensbase fuldført!', 'success');
+                loadKnowledgeBase();
+            } else {
+                createToast('Fejl: ' + r.message, 'danger');
+            }
+        },
+        error: function() { createToast('Fejl under synkronisering', 'danger'); }
+    });
+}
+
+function formatAnswer(answer) {
+    let f = escapeHtml(answer);
+    f = f.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+    f = f.replace(/\n/g, '<br>');
+    return f;
+}
+
+function escapeHtml(text) {
+    const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
+    return (text || '').replace(/[&<>"']/g, m => map[m]);
+}
+</script>
+{% endblock %}

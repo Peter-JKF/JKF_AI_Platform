@@ -1,0 +1,699 @@
+{% extends "base.html" %}
+{% block title %}Salgs-assistent – JKF{% endblock %}
+
+{% block extra_css %}
+<style>
+/* ── Layout ── */
+.sc-layout {
+    display: flex;
+    height: calc(100vh - 2rem);
+    max-height: calc(100vh - 2rem);
+    gap: 1rem;
+}
+
+/* ── History sidebar ── */
+.sc-history {
+    width: 240px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    transition: width 0.2s ease, opacity 0.2s ease, border-color 0.2s ease;
+}
+.sc-history.collapsed {
+    width: 0;
+    opacity: 0;
+    border-color: transparent;
+    pointer-events: none;
+}
+.sc-history-header {
+    padding: 0.85rem 1rem 0.6rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+.sc-history-label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    color: var(--text-muted);
+}
+.sc-history-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0.4rem 0;
+}
+.sc-history-item {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.5rem 0.75rem;
+    cursor: pointer;
+    border-left: 3px solid transparent;
+    transition: background 0.1s, border-color 0.1s;
+}
+.sc-history-item:hover { background: var(--bg-secondary, #f1f5f9); }
+[data-theme="dark"] .sc-history-item:hover { background: #1e293b; }
+.sc-history-item.active {
+    border-left-color: var(--primary);
+    background: var(--bg-secondary, #f1f5f9);
+}
+[data-theme="dark"] .sc-history-item.active { background: #1e293b; }
+.sc-history-item-title {
+    flex: 1;
+    font-size: 0.8rem;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.3;
+}
+.sc-history-item-del {
+    flex-shrink: 0;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    opacity: 0;
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 4px;
+    transition: opacity 0.1s, color 0.1s;
+}
+.sc-history-item:hover .sc-history-item-del { opacity: 1; }
+.sc-history-item-del:hover { color: #dc2626; }
+.sc-history-empty {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    text-align: center;
+    padding: 1.5rem 1rem;
+}
+
+/* ── Collapse toggle button ── */
+.sc-sidebar-toggle {
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 0.75rem;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    transition: color 0.15s;
+}
+.sc-sidebar-toggle:hover { color: var(--primary); }
+
+/* Button shown when sidebar is hidden */
+.sc-sidebar-open-btn {
+    display: none;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.8rem;
+    padding: 0.35rem 0.65rem;
+}
+.sc-sidebar-open-btn.visible { display: flex; }
+
+/* ── Chat pane ── */
+.sc-chat-pane {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+.sc-chat-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+    flex-shrink: 0;
+    gap: 0.5rem;
+}
+.sc-chat-header-left {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+}
+.sc-chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    padding: 1rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    margin-bottom: 1rem;
+}
+.sc-chat-messages:empty::before {
+    content: 'Stil et spørgsmål om salg, omsætning eller kunder – jeg henter svaret direkte fra vores salgsdata.';
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    margin: auto;
+    text-align: center;
+    padding: 2rem;
+}
+.sc-msg {
+    display: flex;
+    flex-direction: column;
+    max-width: 80%;
+}
+.sc-msg.user { align-self: flex-end; align-items: flex-end; }
+.sc-msg.assistant { align-self: flex-start; align-items: flex-start; max-width: min(800px, 95%); }
+.sc-bubble {
+    padding: 0.75rem 1rem;
+    border-radius: 12px;
+    line-height: 1.55;
+    font-size: 0.9rem;
+    word-break: break-word;
+}
+.sc-bubble p { margin-bottom: 0.4rem; }
+.sc-bubble p:last-child { margin-bottom: 0; }
+.sc-bubble strong { font-weight: 600; }
+.sc-bubble ol, .sc-bubble ul { padding-left: 1.3rem; margin-bottom: 0.4rem; }
+.sc-bubble li { margin-bottom: 0.15rem; }
+.sc-table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    margin: 0.5rem 0;
+}
+.sc-bubble table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 0;
+    font-size: 0.85rem;
+}
+.sc-bubble th {
+    background: var(--primary);
+    color: #fff;
+    padding: 0.45rem 0.75rem;
+    text-align: left;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.sc-bubble td {
+    padding: 0.4rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+}
+.sc-bubble tr:last-child td { border-bottom: none; }
+.sc-bubble tr:nth-child(even) td { background: rgba(0,0,0,.03); }
+[data-theme="dark"] .sc-bubble tr:nth-child(even) td { background: rgba(255,255,255,.04); }
+.sc-msg.user .sc-bubble {
+    background: var(--primary);
+    color: #fff;
+    border-bottom-right-radius: 4px;
+}
+.sc-msg.assistant .sc-bubble {
+    background: var(--bg-secondary, #f1f5f9);
+    color: var(--text-primary);
+    border-bottom-left-radius: 4px;
+}
+[data-theme="dark"] .sc-msg.assistant .sc-bubble { background: #1e293b; }
+.sc-sql-toggle {
+    margin-top: 0.4rem;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    user-select: none;
+}
+.sc-sql-toggle:hover { color: var(--primary); }
+.sc-sql-block {
+    display: none;
+    margin-top: 0.4rem;
+    background: var(--bg-secondary, #f8fafc);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.6rem 0.8rem;
+    font-family: 'Courier New', monospace;
+    font-size: 0.78rem;
+    color: var(--text-primary);
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-width: 600px;
+}
+[data-theme="dark"] .sc-sql-block { background: #0f172a; }
+.sc-row-count {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    margin-top: 0.25rem;
+}
+.sc-error .sc-bubble {
+    background: #fee2e2;
+    color: #991b1b;
+    border: 1px solid #fca5a5;
+}
+[data-theme="dark"] .sc-error .sc-bubble {
+    background: #3b0000;
+    color: #fca5a5;
+    border-color: #7f1d1d;
+}
+.sc-typing .sc-bubble {
+    background: var(--bg-secondary, #f1f5f9);
+    color: var(--text-muted);
+    font-style: italic;
+}
+[data-theme="dark"] .sc-typing .sc-bubble { background: #1e293b; }
+
+/* ── Input row ── */
+.sc-input-row {
+    display: flex;
+    gap: 0.5rem;
+    flex-shrink: 0;
+}
+.sc-input-row textarea {
+    flex: 1;
+    resize: none;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text-primary);
+    padding: 0.65rem 1rem;
+    font-size: 0.9rem;
+    line-height: 1.4;
+    outline: none;
+    transition: border-color 0.15s;
+}
+.sc-input-row textarea:focus { border-color: var(--primary); }
+.sc-input-row textarea::placeholder { color: var(--text-muted); }
+.sc-send-btn {
+    flex-shrink: 0;
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+    border: none;
+    background: var(--primary);
+    color: #fff;
+    font-size: 1rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity 0.15s;
+}
+.sc-send-btn:disabled { opacity: 0.5; cursor: default; }
+</style>
+{% endblock %}
+
+{% block main_content %}
+<div class="sc-layout">
+
+    <!-- ── History sidebar ── -->
+    <div class="sc-history" id="scHistory">
+        <div class="sc-history-header">
+            <span class="sc-history-label">Samtalehistorik</span>
+            <button class="sc-sidebar-toggle" id="scHistoryCollapseBtn" title="Skjul historik">
+                <i class="fas fa-chevron-left"></i>
+            </button>
+        </div>
+        <div class="sc-history-list" id="historyList">
+            {% if conversations %}
+                {% for conv in conversations %}
+                <div class="sc-history-item" data-id="{{ conv.id }}" onclick="loadConversation({{ conv.id }}, this)">
+                    <span class="sc-history-item-title" title="{{ conv.title }}">{{ conv.title }}</span>
+                    <span class="sc-history-item-del" title="Slet"
+                          onclick="confirmDelete(event, {{ conv.id }}, '{{ conv.title|e }}')">
+                        <i class="fas fa-trash"></i>
+                    </span>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="sc-history-empty" id="historyEmpty">Ingen samtaler endnu</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- ── Chat pane ── -->
+    <div class="sc-chat-pane">
+        <div class="sc-chat-header">
+            <div class="sc-chat-header-left">
+                <!-- Shown only when sidebar is collapsed -->
+                <button class="btn btn-sm btn-outline-secondary sc-sidebar-open-btn" id="sidebarOpenBtn" title="Vis historik">
+                    <i class="fas fa-history"></i>
+                    <span>Historik</span>
+                </button>
+                <div>
+                    <h2 class="mb-0" style="font-size:1.25rem;">
+                        <i class="fas fa-chart-bar me-2 text-primary"></i>Salgs-assistent
+                    </h2>
+                    <p class="text-muted mb-0" style="font-size:0.82rem;">
+                        Spørg om salg, omsætning, kunder og trends direkte fra vores salgsdata
+                    </p>
+                </div>
+            </div>
+            <button class="btn btn-sm btn-outline-secondary" id="newConvBtn">
+                <i class="fas fa-plus me-1"></i>Ny samtale
+            </button>
+        </div>
+
+        <div class="sc-chat-messages" id="chatMessages"></div>
+
+        <div class="sc-input-row">
+            <textarea id="userInput" rows="2"
+                placeholder="F.eks. 'Hvad er vores totale salg i 2025?' eller 'Hvilke kunder har købt mest det seneste år?'"></textarea>
+            <button class="sc-send-btn" id="sendBtn" title="Send">
+                <i class="fas fa-paper-plane"></i>
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ── Delete confirmation modal ── -->
+<div class="modal fade" id="deleteConvModal" tabindex="-1" aria-labelledby="deleteConvModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered" style="max-width: 420px;">
+        <div class="modal-content">
+            <div class="modal-header border-0 pb-0">
+                <h5 class="modal-title" id="deleteConvModalLabel">
+                    <i class="fas fa-trash-alt me-2 text-danger"></i>Slet samtale
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body pt-2">
+                <p class="mb-0">Er du sikker på, at du vil slette samtalen
+                    <strong id="deleteConvTitle"></strong>?
+                    Dette kan ikke fortrydes.
+                </p>
+            </div>
+            <div class="modal-footer border-0 pt-0">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuller</button>
+                <button type="button" class="btn btn-danger" id="deleteConvConfirmBtn">
+                    <i class="fas fa-trash-alt me-1"></i>Slet
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script>
+marked.setOptions({ breaks: true, gfm: true, tables: true });
+const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+
+let history = [];
+let currentConvId = null;
+let isLoading = false;
+
+const messagesEl      = document.getElementById('chatMessages');
+const inputEl         = document.getElementById('userInput');
+const sendBtn         = document.getElementById('sendBtn');
+const newConvBtn      = document.getElementById('newConvBtn');
+const historyList     = document.getElementById('historyList');
+const scHistory       = document.getElementById('scHistory');
+const sidebarOpenBtn  = document.getElementById('sidebarOpenBtn');
+const collapseBtn     = document.getElementById('scHistoryCollapseBtn');
+
+/* ── Sidebar collapse ── */
+let sidebarCollapsed = localStorage.getItem('scSidebarCollapsed') === 'true';
+
+function applySidebarState(animate) {
+    if (!animate) scHistory.style.transition = 'none';
+    scHistory.classList.toggle('collapsed', sidebarCollapsed);
+    sidebarOpenBtn.classList.toggle('visible', sidebarCollapsed);
+    if (!animate) requestAnimationFrame(() => { scHistory.style.transition = ''; });
+}
+
+collapseBtn.addEventListener('click', () => {
+    sidebarCollapsed = true;
+    localStorage.setItem('scSidebarCollapsed', 'true');
+    applySidebarState(true);
+});
+sidebarOpenBtn.addEventListener('click', () => {
+    sidebarCollapsed = false;
+    localStorage.setItem('scSidebarCollapsed', 'false');
+    applySidebarState(true);
+});
+
+// Apply on load without animation
+applySidebarState(false);
+
+/* ── Scroll ── */
+function scrollBottom() { messagesEl.scrollTop = messagesEl.scrollHeight; }
+
+/* ── Message rendering ── */
+function appendMessage(role, content, extras) {
+    const wrap = document.createElement('div');
+    wrap.className = `sc-msg ${role}`;
+
+    const bubble = document.createElement('div');
+    bubble.className = 'sc-bubble';
+    if (role === 'assistant') {
+        bubble.innerHTML = marked.parse(content);
+        // Wrap tables for horizontal scroll + force all columns left-aligned
+        bubble.querySelectorAll('table').forEach(tbl => {
+            tbl.querySelectorAll('th, td').forEach(cell => {
+                cell.style.textAlign = 'left';
+            });
+            const wrapper = document.createElement('div');
+            wrapper.className = 'sc-table-wrap';
+            tbl.parentNode.insertBefore(wrapper, tbl);
+            wrapper.appendChild(tbl);
+        });
+    } else {
+        bubble.textContent = content;
+    }
+    wrap.appendChild(bubble);
+
+    if (extras && extras.sql) {
+        const toggleRow = document.createElement('div');
+        toggleRow.className = 'sc-sql-toggle';
+        toggleRow.innerHTML = '<i class="fas fa-code"></i> Vis SQL';
+
+        const sqlBlock = document.createElement('pre');
+        sqlBlock.className = 'sc-sql-block';
+        sqlBlock.textContent = extras.sql;
+
+        let open = false;
+        toggleRow.addEventListener('click', () => {
+            open = !open;
+            sqlBlock.style.display = open ? 'block' : 'none';
+            toggleRow.innerHTML = open
+                ? '<i class="fas fa-code"></i> Skjul SQL'
+                : '<i class="fas fa-code"></i> Vis SQL';
+        });
+        wrap.appendChild(toggleRow);
+        wrap.appendChild(sqlBlock);
+
+        if (extras.row_count !== undefined && extras.row_count !== null) {
+            const rc = document.createElement('div');
+            rc.className = 'sc-row-count';
+            rc.textContent = `${extras.row_count} rækker returneret`;
+            wrap.appendChild(rc);
+        }
+    }
+
+    messagesEl.appendChild(wrap);
+    scrollBottom();
+    return wrap;
+}
+
+function appendTyping() {
+    const wrap = document.createElement('div');
+    wrap.className = 'sc-msg assistant sc-typing';
+    const bubble = document.createElement('div');
+    bubble.className = 'sc-bubble';
+    bubble.textContent = 'Tænker…';
+    wrap.appendChild(bubble);
+    messagesEl.appendChild(wrap);
+    scrollBottom();
+    return wrap;
+}
+
+function appendError(msg) {
+    const wrap = document.createElement('div');
+    wrap.className = 'sc-msg assistant sc-error';
+    const bubble = document.createElement('div');
+    bubble.className = 'sc-bubble';
+    bubble.textContent = msg;
+    wrap.appendChild(bubble);
+    messagesEl.appendChild(wrap);
+    scrollBottom();
+}
+
+/* ── History sidebar ── */
+function setActiveHistoryItem(id) {
+    document.querySelectorAll('.sc-history-item').forEach(el => {
+        el.classList.toggle('active', parseInt(el.dataset.id) === id);
+    });
+}
+
+function prependHistoryItem(id, title) {
+    const empty = document.getElementById('historyEmpty');
+    if (empty) empty.remove();
+
+    const existing = historyList.querySelector(`[data-id="${id}"]`);
+    if (existing) existing.remove();
+
+    const item = document.createElement('div');
+    item.className = 'sc-history-item active';
+    item.dataset.id = id;
+    item.onclick = () => loadConversation(id, item);
+    item.innerHTML = `
+        <span class="sc-history-item-title" title="${title}">${title}</span>
+        <span class="sc-history-item-del" title="Slet"
+              onclick="confirmDelete(event, ${id}, ${JSON.stringify(title)})">
+            <i class="fas fa-trash"></i>
+        </span>`;
+    historyList.prepend(item);
+    setActiveHistoryItem(id);
+}
+
+async function loadConversation(id, el) {
+    if (isLoading) return;
+    document.querySelectorAll('.sc-history-item').forEach(e => e.classList.remove('active'));
+    el.classList.add('active');
+
+    try {
+        const res = await fetch(`/api/sales-conversations/${id}`);
+        const data = await res.json();
+        messagesEl.innerHTML = '';
+        history = [];
+        currentConvId = data.id;
+
+        for (const m of data.messages) {
+            appendMessage(m.role, m.content, { sql: m.sql, row_count: m.row_count });
+            history.push({ role: m.role, content: m.content });
+        }
+    } catch (e) {
+        appendError('Kunne ikke indlæse samtalen.');
+    }
+    inputEl.focus();
+}
+
+/* ── Delete with modal ── */
+let pendingDeleteId = null;
+
+const deleteModal    = new bootstrap.Modal(document.getElementById('deleteConvModal'));
+const deleteTitle    = document.getElementById('deleteConvTitle');
+const deleteConfirm  = document.getElementById('deleteConvConfirmBtn');
+
+function confirmDelete(event, id, title) {
+    event.stopPropagation();
+    pendingDeleteId = id;
+    deleteTitle.textContent = `"${title}"`;
+    deleteModal.show();
+}
+
+deleteConfirm.addEventListener('click', async () => {
+    const id = pendingDeleteId;
+    if (!id) return;
+    deleteModal.hide();
+    pendingDeleteId = null;
+
+    try {
+        await fetch(`/api/sales-conversations/${id}`, {
+            method: 'DELETE',
+            headers: { 'X-CSRFToken': csrfToken },
+        });
+    } catch (e) { /* ignore */ }
+
+    const item = historyList.querySelector(`[data-id="${id}"]`);
+    if (item) item.remove();
+
+    if (currentConvId === id) {
+        currentConvId = null;
+        history = [];
+        messagesEl.innerHTML = '';
+    }
+
+    if (!historyList.querySelector('.sc-history-item')) {
+        const empty = document.createElement('div');
+        empty.className = 'sc-history-empty';
+        empty.id = 'historyEmpty';
+        empty.textContent = 'Ingen samtaler endnu';
+        historyList.appendChild(empty);
+    }
+});
+
+/* ── Send ── */
+async function sendMessage() {
+    const text = inputEl.value.trim();
+    if (!text || isLoading) return;
+
+    isLoading = true;
+    sendBtn.disabled = true;
+    inputEl.value = '';
+    inputEl.style.height = '';
+
+    appendMessage('user', text);
+    history.push({ role: 'user', content: text });
+
+    const typingEl = appendTyping();
+
+    try {
+        const res = await fetch('/api/sales-chat', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken,
+            },
+            body: JSON.stringify({
+                message: text,
+                history: history.slice(0, -1),
+                conversation_id: currentConvId,
+            }),
+        });
+        const data = await res.json();
+        typingEl.remove();
+
+        if (data.error) {
+            appendError(data.error);
+        } else {
+            appendMessage('assistant', data.answer, { sql: data.sql, row_count: data.row_count });
+            history.push({ role: 'assistant', content: data.answer });
+
+            if (data.conversation_id) {
+                const isNew = (currentConvId === null);
+                currentConvId = data.conversation_id;
+                if (isNew) {
+                    const title = text.slice(0, 60) + (text.length > 60 ? '…' : '');
+                    prependHistoryItem(currentConvId, title);
+                } else {
+                    const item = historyList.querySelector(`[data-id="${currentConvId}"]`);
+                    if (item) historyList.prepend(item);
+                    setActiveHistoryItem(currentConvId);
+                }
+            }
+        }
+    } catch (e) {
+        typingEl.remove();
+        appendError('Netværksfejl – prøv igen.');
+    }
+
+    isLoading = false;
+    sendBtn.disabled = false;
+    inputEl.focus();
+}
+
+/* ── Event listeners ── */
+sendBtn.addEventListener('click', sendMessage);
+inputEl.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+});
+newConvBtn.addEventListener('click', () => {
+    currentConvId = null;
+    history = [];
+    messagesEl.innerHTML = '';
+    document.querySelectorAll('.sc-history-item').forEach(el => el.classList.remove('active'));
+    inputEl.focus();
+});
+inputEl.addEventListener('input', () => {
+    inputEl.style.height = 'auto';
+    inputEl.style.height = Math.min(inputEl.scrollHeight, 120) + 'px';
+});
+
+inputEl.focus();
+</script>
+{% endblock %}

@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block title %}Integrationer – JKF{% endblock %}
+{% block page_title %}Integrationer{% endblock %}
+
+{% block extra_css %}
+<style>
+    .integration-card {
+        border-radius: var(--radius-lg);
+        border: 1px solid var(--border-color);
+        background: var(--bg-card);
+        padding: 1.5rem;
+        display: flex;
+        align-items: center;
+        gap: 1.25rem;
+        transition: var(--transition);
+    }
+    .integration-card:hover { box-shadow: 0 4px 16px rgba(0,0,0,.08); }
+    .integration-card.disabled { opacity: 0.55; }
+
+    .integration-logo {
+        width: 56px; height: 56px;
+        border-radius: var(--radius);
+        display: flex; align-items: center; justify-content: center;
+        font-size: 1.6rem; flex-shrink: 0;
+        background: var(--bg-page);
+        border: 1px solid var(--border-color);
+    }
+    .integration-meta { flex: 1; min-width: 0; }
+    .integration-meta h6 { font-weight: 600; margin-bottom: 0.2rem; }
+    .integration-meta p  { font-size: 0.85rem; color: var(--text-muted); margin: 0; }
+
+    .status-dot {
+        display: inline-block; width: 8px; height: 8px;
+        border-radius: 50%; margin-right: 0.4rem;
+    }
+    .status-dot.connected  { background: var(--success); }
+    .status-dot.configured { background: var(--warning); }
+    .status-dot.empty      { background: var(--text-muted); }
+
+    .bc-icon {
+        display: flex; align-items: center; justify-content: center; gap: 2px;
+        flex-wrap: wrap; width: 28px; height: 28px;
+    }
+    .bc-icon span {
+        display: block; width: 12px; height: 12px; border-radius: 2px;
+    }
+</style>
+{% endblock %}
+
+{% block main_content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h2 class="mb-1">Integrationer</h2>
+        <p class="text-muted mb-0">Forbind chatbotten til eksterne systemer</p>
+    </div>
+</div>
+
+<div class="row g-3">
+
+    <!-- Business Central -->
+    <div class="col-lg-6">
+        <div class="integration-card">
+            <div class="integration-logo">
+                <!-- Microsoft four-square logo rendered in pure CSS -->
+                <div class="bc-icon">
+                    <span style="background:#f25022;"></span>
+                    <span style="background:#7fba00;"></span>
+                    <span style="background:#00a4ef;"></span>
+                    <span style="background:#ffb900;"></span>
+                </div>
+            </div>
+            <div class="integration-meta">
+                <h6 class="mb-1">Business Central
+                    {% if bc and bc.enabled %}
+                    <span class="status-dot connected"></span><small class="text-success" style="font-weight:500;">Aktiv</small>
+                    {% elif bc and bc.config %}
+                    <span class="status-dot configured"></span><small class="text-warning" style="font-weight:500;">Konfigureret, ikke aktiveret</small>
+                    {% else %}
+                    <span class="status-dot empty"></span><small class="text-muted" style="font-weight:400;">Ikke konfigureret</small>
+                    {% endif %}
+                </h6>
+                <p>Lad chatbotten svare på ordrer, lagerbeholdning og priser direkte fra BC.</p>
+            </div>
+            <a href="{{ url_for('integration_bc') }}" class="btn btn-sm btn-primary">
+                Konfigurér
+            </a>
+        </div>
+    </div>
+
+    <!-- Salgs-datawarehouse (SQL Server) -->
+    <div class="col-lg-6">
+        <div class="integration-card">
+            <div class="integration-logo" style="font-size:1.5rem; color:#0078d4;">
+                <i class="fas fa-database"></i>
+            </div>
+            <div class="integration-meta">
+                <h6 class="mb-1">Salgs-datawarehouse
+                    {% if dw and dw.config and (dw.config | from_json).get('host') %}
+                    <span class="status-dot connected"></span><small class="text-success" style="font-weight:500;">Konfigureret</small>
+                    {% else %}
+                    <span class="status-dot empty"></span><small class="text-muted" style="font-weight:400;">Ikke konfigureret</small>
+                    {% endif %}
+                </h6>
+                <p>Forbind salgs-assistenten til SQL Server datavarehuset med Business Central data.</p>
+            </div>
+            <a href="{{ url_for('integration_dw') }}" class="btn btn-sm btn-primary">
+                Konfigurér
+            </a>
+        </div>
+    </div>
+
+</div>
+{% endblock %}

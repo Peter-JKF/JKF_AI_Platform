@@ -1,0 +1,208 @@
+{% extends "base.html" %}
+{% block title %}Salgs-datawarehouse – JKF{% endblock %}
+{% block page_title %}Salgs-datawarehouse{% endblock %}
+
+{% block extra_css %}
+<style>
+    .test-result {
+        display: none;
+        margin-top: 0.75rem;
+        padding: 0.75rem 1rem;
+        border-radius: var(--radius);
+        font-size: 0.875rem;
+    }
+    .test-result.success { background: var(--success-light); color: var(--success); border: 1px solid var(--success); }
+    .test-result.danger  { background: var(--danger-light);  color: var(--danger);  border: 1px solid var(--danger); }
+    .credentials-hint {
+        font-size: 0.8rem; color: var(--text-muted);
+        display: block; margin-top: 0.3rem;
+    }
+    .section-divider { border-top: 1px solid var(--border-color); margin: 1.5rem 0; }
+</style>
+{% endblock %}
+
+{% block main_content %}
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb" style="font-size:.875rem;">
+        <li class="breadcrumb-item"><a href="{{ url_for('integrations') }}">Integrationer</a></li>
+        <li class="breadcrumb-item active">Salgs-datawarehouse</li>
+    </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-start mb-4">
+    <div>
+        <h2 class="mb-1">Salgs-datawarehouse</h2>
+        <p class="text-muted mb-0">
+            SQL Server forbindelse til Business Central datavarehuset. Bruges af salgs-assistenten til at besvare spørgsmål om salg, omsætning og kunder.
+        </p>
+    </div>
+    {% set has_config = dw and dw.config and (dw.config | from_json).get('host') %}
+    <span class="badge {{ 'bg-success' if has_config else 'bg-secondary' }} px-3 py-2" style="font-size:.8rem;">
+        {{ 'Konfigureret' if has_config else 'Ikke konfigureret' }}
+    </span>
+</div>
+
+<form method="POST" action="{{ url_for('integration_dw') }}" id="dwForm">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <div class="row g-4">
+
+        <!-- Left: Credentials -->
+        <div class="col-lg-7">
+            <div class="card h-100">
+                <div class="card-header"><h5 class="mb-0">Forbindelsesoplysninger</h5></div>
+                <div class="card-body">
+
+                    <div class="row">
+                        <div class="col-sm-8 mb-3">
+                            <label class="form-label fw-semibold">Server / Host
+                                <span class="credentials-hint">IP-adresse eller hostname på SQL Server</span>
+                            </label>
+                            <input type="text" name="host" class="form-control font-monospace"
+                                   value="{{ cfg.host or '' }}"
+                                   placeholder="10.45.10.221" autocomplete="off">
+                        </div>
+                        <div class="col-sm-4 mb-3">
+                            <label class="form-label fw-semibold">Port
+                                <span class="credentials-hint">Standard: 1433</span>
+                            </label>
+                            <input type="number" name="port" class="form-control font-monospace"
+                                   value="{{ cfg.port or 1433 }}"
+                                   placeholder="1433" min="1" max="65535">
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Database
+                            <span class="credentials-hint">Navn på databasen der indeholder salgsdata</span>
+                        </label>
+                        <input type="text" name="database" class="form-control font-monospace"
+                               value="{{ cfg.database or '' }}"
+                               placeholder="BC2SQL_Data" autocomplete="off">
+                    </div>
+
+                    <div class="section-divider"></div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Brugernavn</label>
+                        <input type="text" name="username" class="form-control font-monospace"
+                               value="{{ cfg.username or '' }}"
+                               placeholder="powerbi" autocomplete="off">
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Adgangskode</label>
+                        <div class="input-group">
+                            <input type="password" name="password" id="passwordInput"
+                                   class="form-control font-monospace"
+                                   value="{{ '••••••••' if cfg.password else '' }}"
+                                   placeholder="Adgangskode…" autocomplete="new-password">
+                            <button type="button" class="btn btn-outline-secondary" id="togglePw" title="Vis/skjul">
+                                <i class="fas fa-eye" id="togglePwIcon"></i>
+                            </button>
+                        </div>
+                        {% if cfg.password %}
+                        <small class="text-muted">Lad feltet stå uændret for at beholde den gemte adgangskode.</small>
+                        {% endif %}
+                    </div>
+
+                    <div class="section-divider"></div>
+
+                    <button type="button" class="btn btn-outline-primary" id="testBtn">
+                        <i class="fas fa-plug me-2"></i>Test forbindelse
+                    </button>
+                    <div class="test-result" id="testResult"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right: Info + Save -->
+        <div class="col-lg-5 d-flex flex-column gap-4">
+
+            <button type="submit" class="btn btn-primary w-100">
+                <i class="fas fa-save me-2"></i>Gem indstillinger
+            </button>
+
+            <div class="card">
+                <div class="card-header"><h5 class="mb-0">Om integrationen</h5></div>
+                <div class="card-body" style="font-size:.875rem;">
+                    <p class="text-muted mb-2">Salgs-assistenten forbinder sig til SQL Server ved hvert spørgsmål og henter data i realtid. Databaseskemaet hentes automatisk og caches i serverens hukommelse.</p>
+                    <p class="text-muted mb-2"><strong>Primære tabeller der bruges:</strong></p>
+                    <ul class="text-muted mb-0" style="padding-left:1.2rem;">
+                        <li><code>Salg</code> – daglig salgsoversigt (dato, kunde, beløb, dækningsbidrag)</li>
+                        <li><code>Sales Invoice Header/Line</code> – fakturaer</li>
+                        <li><code>Customer</code> – kundeoplysninger</li>
+                        <li><code>Item</code> – vareoplysninger</li>
+                    </ul>
+                    <div class="section-divider"></div>
+                    <p class="text-muted mb-0"><i class="fas fa-shield-alt me-1"></i>Kun SELECT-forespørgsler er tilladt. Ændringer til data er ikke mulige.</p>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header"><h5 class="mb-0">Adgangsstyring</h5></div>
+                <div class="card-body" style="font-size:.875rem;">
+                    <p class="text-muted mb-0">
+                        Hvilke brugere der kan tilgå salgs-assistenten styres under
+                        <a href="{{ url_for('admin') }}">Brugere</a> → kolonnen "Salgs-assistent".
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</form>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const csrfToken = document.querySelector('meta[name=csrf-token]').getAttribute('content');
+
+document.getElementById('togglePw').addEventListener('click', function () {
+    const inp = document.getElementById('passwordInput');
+    const icon = document.getElementById('togglePwIcon');
+    if (inp.type === 'password') {
+        inp.type = 'text';
+        icon.className = 'fas fa-eye-slash';
+    } else {
+        inp.type = 'password';
+        icon.className = 'fas fa-eye';
+    }
+});
+
+document.getElementById('testBtn').addEventListener('click', async function () {
+    const btn = this;
+    const resultEl = document.getElementById('testResult');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Tester…';
+    resultEl.style.display = 'none';
+
+    const pw = document.querySelector('[name=password]').value.trim();
+    const payload = {
+        host:     document.querySelector('[name=host]').value.trim(),
+        port:     parseInt(document.querySelector('[name=port]').value.trim()) || 1433,
+        database: document.querySelector('[name=database]').value.trim(),
+        username: document.querySelector('[name=username]').value.trim(),
+        password: pw === '••••••••' ? '' : pw,
+    };
+
+    try {
+        const resp = await fetch('/api/integrations/datawarehouse/test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+            body: JSON.stringify(payload),
+        });
+        const data = await resp.json();
+        resultEl.textContent = data.message;
+        resultEl.className = `test-result ${data.success ? 'success' : 'danger'}`;
+        resultEl.style.display = 'block';
+    } catch (e) {
+        resultEl.textContent = 'Netværksfejl: ' + e.message;
+        resultEl.className = 'test-result danger';
+        resultEl.style.display = 'block';
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-plug me-2"></i>Test forbindelse';
+    }
+});
+</script>
+{% endblock %}

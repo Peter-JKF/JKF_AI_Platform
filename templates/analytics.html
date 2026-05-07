@@ -1,0 +1,1357 @@
+{% extends "base.html" %}
+
+{% block page_title %}Analytics{% endblock %}
+
+{% block main_content %}
+<!-- Page Header -->
+<div class="mb-4">
+    <h2 class="mb-1">Analytics</h2>
+    <p class="text-muted mb-0">Detaljeret indsigt i chatbot-samtaler</p>
+</div>
+
+<!-- Time Interval Filter -->
+<div class="card mb-4">
+    <div class="card-body py-3">
+        <p class="text-muted small text-center mb-2">Filtrer data efter tidsperiode eller vælg en brugerdefineret datoperiode</p>
+        <div class="d-flex flex-wrap gap-2 align-items-center justify-content-center">
+            <span class="filter-label">Filtrer efter sidste:</span>
+            <button type="button" class="btn btn-sm btn-outline-primary time-interval active" data-interval="30">Måned</button>
+            <button type="button" class="btn btn-sm btn-outline-primary time-interval" data-interval="90">3 måneder</button>
+            <button type="button" class="btn btn-sm btn-outline-primary time-interval" data-interval="180">6 måneder</button>
+            <button type="button" class="btn btn-sm btn-outline-primary time-interval" data-interval="365">År</button>
+            <div class="filter-divider"></div>
+            <button type="button" class="btn btn-sm btn-outline-primary time-interval" data-interval="all">For altid</button>
+            <div class="filter-divider"></div>
+            <div class="d-flex align-items-center gap-1">
+                <input type="date" class="form-control form-control-sm" id="customStartDate" style="width: 135px;">
+                <span class="text-muted small px-1">til</span>
+                <input type="date" class="form-control form-control-sm" id="customEndDate" style="width: 135px;">
+                <button type="button" class="btn btn-sm btn-outline-secondary ms-2" id="resetDates" title="Nulstil til sidste måned">
+                    <i class="fas fa-redo"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Stats Cards Row -->
+<div class="row g-4 mb-4">
+    <!-- Total Conversations Card -->
+    <div class="col-lg-3 col-md-6">
+        <div class="stat-card">
+            <div class="stat-card-header">
+                <div class="stat-card-icon primary">
+                    <i class="fas fa-comments"></i>
+                </div>
+            </div>
+            <div class="stat-card-label">Total samtaler
+                <i class="fas fa-info-circle text-muted" style="font-size: 0.75rem; cursor: help;" data-bs-toggle="tooltip" data-bs-placement="top" title="Ændring i antal samtaler sammenlignet med forrige periode"></i>
+            </div>
+            <div class="stat-card-value" id="totalConversations">{{ total_conversations }}</div>
+            <div class="stat-card-change" id="conversationsTrend">
+                {% if conversations_trend.direction == 'up' %}
+                <span class="positive">
+                    <i class="fas fa-arrow-up"></i> {{ conversations_trend.change }}
+                </span>
+                {% elif conversations_trend.direction == 'down' %}
+                <span class="negative">
+                    <i class="fas fa-arrow-down"></i> {{ conversations_trend.change }}
+                </span>
+                {% else %}
+                <span>Ingen ændring</span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- CSAT Score Card -->
+    <div class="col-lg-3 col-md-6">
+        <div class="stat-card">
+            <div class="stat-card-header">
+                <div class="stat-card-icon success">
+                    <i class="fas fa-smile"></i>
+                </div>
+            </div>
+            <div class="stat-card-label">CSAT Score
+                <i class="fas fa-info-circle text-muted" style="font-size: 0.75rem; cursor: help;" data-bs-toggle="tooltip" data-bs-placement="top" title="Procentdel af tilfredse kunder (rating 4-5). Ændring vs. forrige periode"></i>
+            </div>
+            <div class="stat-card-value" id="csatScore">{{ "%.1f"|format(csat_score) }}%</div>
+            <div class="stat-card-change" id="csatTrend">
+                {% if csat_trend.direction == 'up' %}
+                <span class="positive">
+                    <i class="fas fa-arrow-up"></i> {{ csat_trend.change }} pp
+                </span>
+                {% elif csat_trend.direction == 'down' %}
+                <span class="negative">
+                    <i class="fas fa-arrow-down"></i> {{ csat_trend.change }} pp
+                </span>
+                {% else %}
+                <span>Ingen ændring</span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- FCR Rate Card -->
+    <div class="col-lg-3 col-md-6">
+        <div class="stat-card">
+            <div class="stat-card-header">
+                <div class="stat-card-icon warning">
+                    <i class="fas fa-check-circle"></i>
+                </div>
+            </div>
+            <div class="stat-card-label">Løsningsrate (FCR)
+                <i class="fas fa-info-circle text-muted" style="font-size: 0.75rem; cursor: help;" data-bs-toggle="tooltip" data-bs-placement="top" title="Procentdel af samtaler løst uden videnshuller. Ændring vs. forrige periode"></i>
+            </div>
+            <div class="stat-card-value" id="fcrRate">{{ "%.1f"|format(fcr_rate) }}%</div>
+            <div class="stat-card-change" id="fcrTrend">
+                {% if fcr_trend.direction == 'up' %}
+                <span class="positive">
+                    <i class="fas fa-arrow-up"></i> {{ fcr_trend.change }} pp
+                </span>
+                {% elif fcr_trend.direction == 'down' %}
+                <span class="negative">
+                    <i class="fas fa-arrow-down"></i> {{ fcr_trend.change }} pp
+                </span>
+                {% else %}
+                <span>Ingen ændring</span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- CTR Card -->
+    <div class="col-lg-3 col-md-6">
+        <div class="stat-card">
+            <div class="stat-card-header">
+                <div class="stat-card-icon primary">
+                    <i class="fas fa-mouse-pointer"></i>
+                </div>
+            </div>
+            <div class="stat-card-label">Klik-rate (CTR)
+                <i class="fas fa-info-circle text-muted" style="font-size: 0.75rem; cursor: help;" data-bs-toggle="tooltip" data-bs-placement="top" title="Procentdel af samtaler hvor brugeren klikkede på et link"></i>
+            </div>
+            <div class="stat-card-value" id="ctr">{{ "%.1f"|format(ctr) }}%</div>
+            <div class="stat-card-change" id="ctrTrend">
+                {% if ctr_trend.direction == 'up' %}
+                <span class="positive">
+                    <i class="fas fa-arrow-up"></i> {{ ctr_trend.change }} pp
+                </span>
+                {% elif ctr_trend.direction == 'down' %}
+                <span class="negative">
+                    <i class="fas fa-arrow-down"></i> {{ ctr_trend.change }} pp
+                </span>
+                {% else %}
+                <span>Ingen ændring</span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Charts Row 1: Knowledge Gaps & Peak Hours -->
+<div class="row g-4 mb-4">
+    <!-- Knowledge Gaps with Training -->
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Videnshuller</h5>
+                <div class="d-flex align-items-center gap-2">
+                    <button class="btn btn-sm btn-outline-primary" id="analyzeGapsBtn" title="Analyser alle videnshuller med AI">
+                        <i class="fas fa-magic me-1"></i>Analyser med AI
+                    </button>
+                    <span class="badge badge-warning" id="knowledgeGapsCount">{{ knowledge_gaps }}</span>
+                </div>
+            </div>
+            <div class="card-body">
+                <p class="text-muted text-center mb-3">Samtaler med manglende information</p>
+                <div class="table-responsive" style="max-height: 360px; overflow-y: auto;">
+                    <table class="table table-hover mb-0">
+                        <thead>
+                            <tr>
+                                <th>Samtale</th>
+                                <th>Dato</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="knowledgeGapTableBody">
+                            {% for conv in knowledge_gap_conversations %}
+                            <tr>
+                                <td>Samtale {{ conv.conversation_number }}</td>
+                                <td class="text-muted">{{ conv.timestamp }}</td>
+                                <td class="text-end">
+                                    <button class="btn btn-sm btn-outline-primary view-knowledge-gap me-1" data-thread-id="{{ conv.thread_id }}">
+                                        <i class="fas fa-eye"></i>
+                                    </button>
+                                    <button class="btn btn-sm btn-primary train-chatbot" data-thread-id="{{ conv.thread_id }}" title="Træn chatbot">
+                                        <i class="fas fa-graduation-cap"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Peak Hours Chart -->
+    <div class="col-md-6">
+        <div class="card h-100">
+            <div class="card-header">
+                <h5 class="mb-0">Mest travle timer</h5>
+            </div>
+            <div class="card-body">
+                <div class="chart-container" style="height: 300px;">
+                    <canvas id="hourlyChart"></canvas>
+                </div>
+                <div class="mt-3 pt-3 border-top">
+                    <div class="row text-center">
+                        <div class="col-6 border-end">
+                            <div class="text-muted small mb-1">Hverdage</div>
+                            <div class="fw-semibold" id="weekdayCount">{{ weekday_conversations }}</div>
+                            <div class="text-muted small">{{ "%.1f"|format(100 - weekend_percentage) }}%</div>
+                        </div>
+                        <div class="col-6">
+                            <div class="text-muted small mb-1">Weekend</div>
+                            <div class="fw-semibold" id="weekendCount">{{ weekend_conversations }}</div>
+                            <div class="text-muted small" id="weekendPercentage">{{ "%.1f"|format(weekend_percentage) }}%</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Charts Row 2: Satisfaction & Language Distribution -->
+<div class="row g-4 mb-4">
+    <!-- Satisfaction Chart with CSAT -->
+    <div class="col-md-6">
+        <div class="card h-100">
+            <div class="card-header">
+                <h5 class="mb-0">Kundetilfredshed</h5>
+            </div>
+            <div class="card-body">
+                <div class="text-center mb-3">
+                    <div class="h3 mb-0" style="color: var(--primary);">CSAT: <span id="csatScoreChart">{{ "%.1f"|format(csat_score) }}%</span></div>
+                    <small class="text-muted">Tilfredse kunder (rating 4-5)</small>
+                </div>
+                <div class="chart-container" style="height: 300px;">
+                    <canvas id="feedbackChart"></canvas>
+                </div>
+                <div class="text-center mt-3">
+                    <button id="viewFeedbackConversations" class="btn btn-outline-primary btn-sm">
+                        <i class="fas fa-eye me-2"></i>Se samtaler med feedback
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Language Distribution -->
+    <div class="col-md-6">
+        <div class="card h-100" style="display: flex; flex-direction: column;">
+            <div class="card-header">
+                <h5 class="mb-0">Sprogfordeling</h5>
+            </div>
+            <div class="card-body" style="flex: 1; display: flex; flex-direction: column; min-height: 0;">
+                <div class="chart-container" style="flex: 1; position: relative;">
+                    <canvas id="languageChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Charts Row 3: Top Categories & Clicked Links -->
+<div class="row g-4 mb-4">
+    <!-- Top Categories -->
+    <div class="col-md-6">
+        <div class="card h-100">
+            <div class="card-header">
+                <h5 class="mb-0">Top 10 kategorier</h5>
+            </div>
+            <div class="card-body">
+                <div class="chart-container" style="height: 300px;">
+                    <canvas id="topicsChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Top Clicked Links -->
+    <div class="col-md-6">
+        <div class="card h-100">
+            <div class="card-header">
+                <h5 class="mb-0">Top 10 mest klikkede links</h5>
+            </div>
+            <div class="card-body">
+                <div class="chart-container" style="height: 300px;">
+                    <canvas id="linksChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Knowledge Gap Training Modal -->
+<div class="modal fade" id="trainingModal" tabindex="-1" aria-labelledby="trainingModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="trainingModalLabel">Træn Chatbot</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6 class="mb-3">Samtale med videnshul</h6>
+                        <div class="chat-messages" id="trainingConversation" style="height: 400px; overflow-y: auto; background: var(--bg-page); border-radius: var(--radius-lg); padding: 1rem;">
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <h6 class="mb-3">Tilføj til vidensbase</h6>
+                        <form id="trainingForm">
+                            <div class="form-group mb-3">
+                                <label for="trainingQuestion" class="form-label">Spørgsmål / Emne</label>
+                                <input type="text" class="form-control" id="trainingQuestion" placeholder="Hvad handler samtalen om?" required>
+                                <small class="form-text text-muted">F.eks. "Leveringstid til Jylland"</small>
+                            </div>
+                            <div class="form-group mb-3">
+                                <label for="trainingAnswer" class="form-label">Korrekt svar</label>
+                                <textarea class="form-control" id="trainingAnswer" rows="8" placeholder="Skriv det ideelle svar som chatbotten burde have givet..." required></textarea>
+                                <small class="form-text text-muted">Dette vil blive tilføjet til chatbottens vidensbase</small>
+                            </div>
+                            <input type="hidden" id="trainingThreadId">
+                            <button type="submit" class="btn btn-primary w-100">
+                                <i class="fas fa-graduation-cap me-2"></i>Tilføj til vidensbase
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Knowledge Gap View Modal -->
+<div class="modal fade" id="knowledgeGapModal" tabindex="-1" aria-labelledby="knowledgeGapModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="knowledgeGapModalLabel">Samtaler med videnshuller</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row">
+                    <div class="col-md-4">
+                        <div class="conversation-list-sidebar" id="knowledgeGapSidebar" style="height: 500px; overflow-y: auto;">
+                        </div>
+                    </div>
+                    <div class="col-md-8">
+                        <div class="conversation-container">
+                            <div class="chat-messages" id="knowledgeGapMessages" style="height: 350px; overflow-y: auto; background: var(--bg-page); border-radius: var(--radius-lg); padding: 1rem;">
+                            </div>
+                        </div>
+                        <div class="comment-section mt-4">
+                            <h6>Kommentarer</h6>
+                            <div class="comments-list mt-3" id="knowledgeGapComments">
+                            </div>
+                        </div>
+                        <form id="knowledgeGapCommentForm" class="mt-3">
+                            <div class="form-group">
+                                <textarea class="form-control" name="comment" rows="2" placeholder="Tilføj en kommentar..."></textarea>
+                            </div>
+                            <div class="form-group mt-2">
+                                <button type="submit" class="btn btn-primary btn-sm">Indsend kommentar</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Knowledge Gap AI Analysis Modal -->
+<div class="modal fade" id="gapAnalysisModal" tabindex="-1" aria-labelledby="gapAnalysisModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="gapAnalysisModalLabel">
+                    <i class="fas fa-magic me-2 text-primary"></i>AI Anbefalinger til vidensbase
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Tabs -->
+                <ul class="nav nav-tabs mb-3" id="gapAnalysisTabs">
+                    <li class="nav-item">
+                        <button class="nav-link active" id="gapTabNew" data-tab="new">
+                            <i class="fas fa-magic me-1"></i>Ny analyse
+                        </button>
+                    </li>
+                    <li class="nav-item">
+                        <button class="nav-link" id="gapTabHistory" data-tab="history">
+                            <i class="fas fa-history me-1"></i>Historik
+                        </button>
+                    </li>
+                </ul>
+
+                <!-- New analysis panel -->
+                <div id="gapPanelNew">
+                    <div id="gapAnalysisIdle" class="text-center py-5">
+                        <i class="fas fa-magic fa-2x text-primary mb-3 d-block"></i>
+                        <h6 class="mb-1">Analyser videnshuller med AI</h6>
+                        <p class="text-muted small mb-4">AI gennemgår alle samtaler med videnshuller i den valgte periode og giver 5 konkrete anbefalinger til hvad der bør tilføjes til chatbottens vidensbase.</p>
+                        <button class="btn btn-primary" id="startGapAnalysisBtn">
+                            <i class="fas fa-play me-2"></i>Start analyse
+                        </button>
+                    </div>
+                    <div id="gapAnalysisLoading" class="d-none text-center py-5">
+                        <div class="spinner-border text-primary mb-3" role="status" style="width: 3rem; height: 3rem;">
+                            <span class="visually-hidden">Analyserer...</span>
+                        </div>
+                        <h6 class="text-muted mb-1" id="gapAnalysisLoadingTitle">Analyserer videnshuller...</h6>
+                        <p class="text-muted small mb-0" id="gapAnalysisLoadingMsg">Gennemlæser alle samtaler med manglende information</p>
+                    </div>
+                    <div id="gapAnalysisError" class="d-none">
+                        <div class="alert alert-danger d-flex align-items-center gap-2 mb-0">
+                            <i class="fas fa-exclamation-circle"></i>
+                            <span id="gapAnalysisErrorMsg">Analysen mislykkedes. Prøv igen senere.</span>
+                        </div>
+                    </div>
+                    <div id="gapAnalysisResults" class="d-none">
+                        <p class="text-muted small mb-3" id="gapAnalysisMeta"></p>
+                        <div id="gapAnalysisRecommendations"></div>
+                        <div class="alert alert-light border mt-4 mb-0 small text-muted">
+                            <i class="fas fa-info-circle me-1"></i>
+                            Disse anbefalinger er baseret på mønstre på tværs af alle videnshuller. For at gå i dybden med en specifik samtale kan du gennemgå dem enkeltvis i listen nedenfor.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- History panel -->
+                <div id="gapPanelHistory" class="d-none">
+                    <div id="gapHistoryLoading" class="text-center py-4">
+                        <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+                        <span class="text-muted ms-2 small">Henter historik...</span>
+                    </div>
+                    <div id="gapHistoryEmpty" class="d-none text-center py-4 text-muted">
+                        <i class="fas fa-history fa-2x mb-2 d-block"></i>
+                        Ingen tidligere analyser endnu.
+                    </div>
+                    <div id="gapHistoryError" class="d-none">
+                        <div class="alert alert-danger small mb-0">Kunne ikke hente historik.</div>
+                    </div>
+                    <div class="accordion" id="gapHistoryAccordion"></div>
+                </div>
+            </div>
+            <div class="modal-footer d-none" id="gapAnalysisFooter">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Luk</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Feedback Modal -->
+<div class="modal fade" id="feedbackModal" tabindex="-1" aria-labelledby="feedbackModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="feedbackModalLabel">Samtaler med feedback</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row">
+                    <div class="col-md-4">
+                        <div class="conversation-list-sidebar" id="feedbackSidebar" style="height: 500px; overflow-y: auto;">
+                        </div>
+                    </div>
+                    <div class="col-md-8">
+                        <div class="conversation-container">
+                            <div class="chat-messages" id="feedbackMessages" style="height: 350px; overflow-y: auto; background: var(--bg-page); border-radius: var(--radius-lg); padding: 1rem;">
+                            </div>
+                        </div>
+                        <div class="comment-section mt-4">
+                            <h6>Kommentarer</h6>
+                            <div class="comments-list mt-3" id="feedbackComments">
+                            </div>
+                        </div>
+                        <form id="feedbackCommentForm" class="mt-3">
+                            <div class="form-group">
+                                <textarea class="form-control" name="comment" rows="2" placeholder="Tilføj en kommentar..."></textarea>
+                            </div>
+                            <div class="form-group mt-2">
+                                <button type="submit" class="btn btn-primary btn-sm">Indsend kommentar</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    .time-interval.active {
+        background-color: var(--primary);
+        color: white;
+        border-color: var(--primary);
+    }
+
+    .filter-label {
+        font-size: 0.875rem;
+        font-weight: 600;
+        color: var(--text-secondary);
+        margin-right: 0.25rem;
+        white-space: nowrap;
+    }
+
+    .filter-divider {
+        width: 1px;
+        height: 24px;
+        background-color: var(--border-color);
+        margin: 0 0.25rem;
+        flex-shrink: 0;
+    }
+
+    .time-interval {
+        white-space: nowrap;
+    }
+
+    @media (max-width: 768px) {
+        .filter-divider { display: none; }
+        .time-interval { flex: 1; min-width: 0; }
+    }
+
+    .conversation-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+    }
+
+    .conversation-list li {
+        margin-bottom: 0.5rem;
+    }
+
+    .conversation-list li a {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.75rem 1rem;
+        border-radius: var(--radius);
+        text-decoration: none;
+        color: var(--text-primary);
+        background: var(--bg-page);
+        transition: var(--transition);
+    }
+
+    .conversation-list li a:hover {
+        background: var(--primary-light);
+    }
+
+    .conversation-list li.active a {
+        background: var(--primary-light);
+        border-left: 3px solid var(--primary);
+    }
+
+    .conversation-info {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .conversation-number {
+        font-weight: 600;
+    }
+
+    .conversation-time {
+        font-size: 0.8rem;
+        color: var(--text-muted);
+    }
+
+    .message {
+        max-width: 75%;
+        margin-bottom: 1rem;
+        padding: 0.75rem 1rem;
+        border-radius: var(--radius-lg);
+    }
+
+    .user-message {
+        background: var(--primary);
+        color: white;
+        margin-left: auto;
+        border-bottom-right-radius: 4px;
+    }
+
+    .bot-message {
+        background: white;
+        border: 1px solid var(--border-color);
+        margin-right: auto;
+        border-bottom-left-radius: 4px;
+    }
+
+    .message-timestamp {
+        font-size: 0.7rem;
+        opacity: 0.7;
+        margin-top: 0.25rem;
+        text-align: right;
+    }
+
+    .comment {
+        background: var(--bg-page);
+        border-radius: var(--radius);
+        padding: 0.75rem;
+        margin-bottom: 0.5rem;
+        font-size: 0.875rem;
+    }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    var hourlyChart, feedbackChart, languageChart, topicsChart, linksChart;
+    var currentInterval = 30;
+    var csrfToken = document.querySelector('meta[name=csrf-token]') ? document.querySelector('meta[name=csrf-token]').getAttribute('content') : '';
+
+    function getEffectiveInterval() {
+        if (currentInterval === 'custom') {
+            var s = document.getElementById('customStartDate').value;
+            var e = document.getElementById('customEndDate').value;
+            if (s && e) {
+                var days = Math.round((new Date(e) - new Date(s)) / (1000 * 60 * 60 * 24));
+                return days > 0 ? days : 30;
+            }
+            return 30;
+        }
+        return currentInterval;
+    }
+
+    const brandColor = '#1a56db';
+    const brandColorLight = 'rgba(26,86,219,0.1)';
+
+    function initCharts() {
+        // Hourly Chart
+        var hourlyCtx = document.getElementById('hourlyChart').getContext('2d');
+        var hourlyData = {{ hourly_counts|tojson }};
+
+        hourlyChart = new Chart(hourlyCtx, {
+            type: 'bar',
+            data: {
+                labels: hourlyData.map(item => `${item.hour.toString().padStart(2, '0')}:00`),
+                datasets: [{
+                    label: 'Samtaler',
+                    data: hourlyData.map(item => item.count),
+                    backgroundColor: brandColor,
+                    borderRadius: 6,
+                    borderSkipped: false
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    y: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.05)' } },
+                    x: { grid: { display: false } }
+                }
+            }
+        });
+
+        // Feedback Chart
+        var feedbackCtx = document.getElementById('feedbackChart').getContext('2d');
+        var feedbackData = {{ feedback_counts|tojson }};
+        var totalFeedback = feedbackData['1'] + feedbackData['2'] + feedbackData['3'] + feedbackData['4'] + feedbackData['5'];
+        var percentages = [
+            totalFeedback > 0 ? ((feedbackData['1'] / totalFeedback) * 100).toFixed(1) : 0,
+            totalFeedback > 0 ? ((feedbackData['2'] / totalFeedback) * 100).toFixed(1) : 0,
+            totalFeedback > 0 ? ((feedbackData['3'] / totalFeedback) * 100).toFixed(1) : 0,
+            totalFeedback > 0 ? ((feedbackData['4'] / totalFeedback) * 100).toFixed(1) : 0,
+            totalFeedback > 0 ? ((feedbackData['5'] / totalFeedback) * 100).toFixed(1) : 0
+        ];
+
+        var feedbackLabels = ['😠', '☹️', '😐', '😃', '🤩'];
+        var feedbackDescriptions = ['Forfærdelig', 'Dårlig', 'Okay', 'God', 'Fantastisk'];
+
+        feedbackChart = new Chart(feedbackCtx, {
+            type: 'bar',
+            data: {
+                labels: feedbackLabels,
+                datasets: [{
+                    data: [feedbackData['1'], feedbackData['2'], feedbackData['3'], feedbackData['4'], feedbackData['5']],
+                    backgroundColor: ['#ef4444', '#f97316', '#f59e0b', '#10b981', '#22c55e'],
+                    borderRadius: 6,
+                    borderSkipped: false
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            title: function(context) {
+                                return feedbackLabels[context[0].dataIndex] + ' - ' + feedbackDescriptions[context[0].dataIndex];
+                            },
+                            label: function(context) {
+                                return `Antal: ${context.raw} (${percentages[context.dataIndex]}%)`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.05)' } },
+                    x: { ticks: { font: { size: 20 } }, grid: { display: false } }
+                }
+            }
+        });
+
+        // Language Chart
+        var languageCtx = document.getElementById('languageChart').getContext('2d');
+        var languageData = {{ language_distribution|tojson }};
+
+        languageChart = new Chart(languageCtx, {
+            type: 'doughnut',
+            data: {
+                labels: languageData.map(item => item.language),
+                datasets: [{
+                    data: languageData.map(item => item.count),
+                    backgroundColor: [brandColor, '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899']
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                cutout: '60%',
+                plugins: {
+                    legend: { position: 'right', labels: { boxWidth: 12 } }
+                }
+            }
+        });
+
+        // Topics Chart
+        var topicsCtx = document.getElementById('topicsChart').getContext('2d');
+        var topicsData = {{ top_topics|tojson }};
+
+        var processedTopicsData = {};
+        topicsData.forEach(item => {
+            if (!['Uncategorized', 'Ukategoriseret'].includes(item.category)) {
+                var normalizedCategory = item.category.charAt(0).toUpperCase() + item.category.slice(1).toLowerCase();
+                processedTopicsData[normalizedCategory] = (processedTopicsData[normalizedCategory] || 0) + item.count;
+            }
+        });
+
+        var filteredTopicsData = Object.entries(processedTopicsData)
+            .map(([category, count]) => ({category, count}))
+            .sort((a, b) => b.count - a.count)
+            .slice(0, 10);
+
+        topicsChart = new Chart(topicsCtx, {
+            type: 'bar',
+            data: {
+                labels: filteredTopicsData.map(item => item.category),
+                datasets: [{
+                    data: filteredTopicsData.map(item => item.count),
+                    backgroundColor: brandColor,
+                    borderRadius: 6,
+                    borderSkipped: false
+                }]
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.05)' } },
+                    y: { grid: { display: false } }
+                }
+            }
+        });
+
+        // Links Chart
+        var linksCtx = document.getElementById('linksChart').getContext('2d');
+        var linksData = {{ clicked_links|tojson }};
+
+        var processedLinksData = [];
+        linksData.forEach(item => {
+            item.clicked_link.split('|').forEach(link => {
+                link = link.trim();
+                try {
+                    var pathOnly = new URL(link).pathname;
+                    pathOnly = pathOnly === '/' ? 'Forside' : pathOnly;
+                    var existing = processedLinksData.find(x => x.link === pathOnly);
+                    if (existing) {
+                        existing.count += item.count;
+                    } else {
+                        processedLinksData.push({ link: pathOnly, count: item.count, fullUrl: link });
+                    }
+                } catch(e) {}
+            });
+        });
+
+        processedLinksData = processedLinksData.sort((a, b) => b.count - a.count).slice(0, 10);
+
+        linksChart = new Chart(linksCtx, {
+            type: 'bar',
+            data: {
+                labels: processedLinksData.map(item => item.link.length > 25 ? item.link.substr(0, 22) + '...' : item.link),
+                datasets: [{
+                    data: processedLinksData.map(item => item.count),
+                    backgroundColor: brandColor,
+                    borderRadius: 6,
+                    borderSkipped: false
+                }]
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            title: function(context) {
+                                return processedLinksData[context[0].dataIndex].fullUrl;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.05)' } },
+                    y: { grid: { display: false } }
+                }
+            }
+        });
+    }
+
+    initCharts();
+
+    // Initialize Bootstrap tooltips
+    var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+    tooltipTriggerList.map(function(el) { return new bootstrap.Tooltip(el); });
+
+    // Update data based on time interval or custom date range
+    function updateData(interval, startDate, endDate) {
+        var url = `/api/analytics?interval=${interval}`;
+        if (startDate && endDate) {
+            url = `/api/analytics?start_date=${startDate}&end_date=${endDate}`;
+        }
+
+        fetch(url)
+            .then(response => response.json())
+            .then(data => {
+                // Update stat cards
+                document.getElementById('totalConversations').textContent = data.total_conversations;
+                document.getElementById('csatScore').textContent = data.csat_score.toFixed(1) + '%';
+                document.getElementById('csatScoreChart').textContent = data.csat_score.toFixed(1) + '%';
+                document.getElementById('fcrRate').textContent = data.fcr_rate.toFixed(1) + '%';
+                document.getElementById('ctr').textContent = data.ctr.toFixed(1) + '%';
+                document.getElementById('knowledgeGapsCount').textContent = data.knowledge_gaps;
+
+                // Update trends
+                updateTrend('conversationsTrend', data.conversations_trend);
+                updateTrend('csatTrend', data.csat_trend);
+                updateTrend('fcrTrend', data.fcr_trend);
+                updateTrend('ctrTrend', data.ctr_trend);
+
+                // Update weekend/weekday data
+                document.getElementById('weekendCount').textContent = data.weekend_conversations;
+                document.getElementById('weekdayCount').textContent = data.weekday_conversations;
+                document.getElementById('weekendPercentage').textContent = data.weekend_percentage.toFixed(1) + '%';
+
+                // Update charts
+                hourlyChart.data.labels = data.hourly_counts.map(item => `${item.hour.toString().padStart(2, '0')}:00`);
+                hourlyChart.data.datasets[0].data = data.hourly_counts.map(item => item.count);
+                hourlyChart.update();
+
+                feedbackChart.data.datasets[0].data = [data.feedback_counts['1'], data.feedback_counts['2'], data.feedback_counts['3'], data.feedback_counts['4'], data.feedback_counts['5']];
+                feedbackChart.update();
+
+                languageChart.data.labels = data.language_distribution.map(item => item.language);
+                languageChart.data.datasets[0].data = data.language_distribution.map(item => item.count);
+                languageChart.update();
+
+                var processedTopicsData = {};
+                data.top_topics.forEach(item => {
+                    if (!['Uncategorized', 'Ukategoriseret'].includes(item.category)) {
+                        var normalizedCategory = item.category.charAt(0).toUpperCase() + item.category.slice(1).toLowerCase();
+                        processedTopicsData[normalizedCategory] = (processedTopicsData[normalizedCategory] || 0) + item.count;
+                    }
+                });
+                var filteredTopicsData = Object.entries(processedTopicsData)
+                    .map(([category, count]) => ({category, count}))
+                    .sort((a, b) => b.count - a.count).slice(0, 10);
+                topicsChart.data.labels = filteredTopicsData.map(item => item.category);
+                topicsChart.data.datasets[0].data = filteredTopicsData.map(item => item.count);
+                topicsChart.update();
+
+                var processedLinksData = [];
+                data.clicked_links.forEach(item => {
+                    item.clicked_link.split('|').forEach(link => {
+                        link = link.trim();
+                        try {
+                            var pathOnly = new URL(link).pathname;
+                            pathOnly = pathOnly === '/' ? 'Forside' : pathOnly;
+                            var existing = processedLinksData.find(x => x.link === pathOnly);
+                            if (existing) { existing.count += item.count; }
+                            else { processedLinksData.push({ link: pathOnly, count: item.count, fullUrl: link }); }
+                        } catch(e) {}
+                    });
+                });
+                processedLinksData = processedLinksData.sort((a, b) => b.count - a.count).slice(0, 10);
+                linksChart.data.labels = processedLinksData.map(item => item.link.length > 25 ? item.link.substr(0, 22) + '...' : item.link);
+                linksChart.data.datasets[0].data = processedLinksData.map(item => item.count);
+                linksChart.update();
+
+                // Update knowledge gap table
+                var tbody = document.getElementById('knowledgeGapTableBody');
+                tbody.innerHTML = '';
+                data.knowledge_gap_conversations.forEach(conv => {
+                    tbody.innerHTML += `
+                        <tr>
+                            <td>Samtale ${conv.conversation_number}</td>
+                            <td class="text-muted">${conv.timestamp}</td>
+                            <td class="text-end">
+                                <button class="btn btn-sm btn-outline-primary view-knowledge-gap me-1" data-thread-id="${conv.thread_id}">
+                                    <i class="fas fa-eye"></i>
+                                </button>
+                                <button class="btn btn-sm btn-primary train-chatbot" data-thread-id="${conv.thread_id}" title="Træn chatbot">
+                                    <i class="fas fa-graduation-cap"></i>
+                                </button>
+                            </td>
+                        </tr>
+                    `;
+                });
+                setupKnowledgeGapButtons();
+                setupTrainingButtons();
+            });
+    }
+
+    function updateTrend(elementId, trend) {
+        var el = document.getElementById(elementId);
+        var unit = (elementId === 'conversationsTrend') ? '' : ' pp';
+        if (trend.direction === 'up') {
+            el.innerHTML = '<span class="positive"><i class="fas fa-arrow-up"></i> ' + trend.change + unit + '</span>';
+        } else if (trend.direction === 'down') {
+            el.innerHTML = '<span class="negative"><i class="fas fa-arrow-down"></i> ' + trend.change + unit + '</span>';
+        } else {
+            el.innerHTML = '<span>Ingen ændring</span>';
+        }
+    }
+
+    function formatDate(date) {
+        var y = date.getFullYear();
+        var m = String(date.getMonth() + 1).padStart(2, '0');
+        var d = String(date.getDate()).padStart(2, '0');
+        return y + '-' + m + '-' + d;
+    }
+
+    function setDatesFromInterval(interval) {
+        var today = new Date();
+        var endInput = document.getElementById('customEndDate');
+        var startInput = document.getElementById('customStartDate');
+        endInput.value = formatDate(today);
+        if (interval === 'all') {
+            startInput.value = '';
+            endInput.value = '';
+        } else {
+            var start = new Date(today);
+            start.setDate(today.getDate() - parseInt(interval));
+            startInput.value = formatDate(start);
+        }
+    }
+
+    setDatesFromInterval(30);
+
+    document.querySelectorAll('.time-interval').forEach(button => {
+        button.addEventListener('click', function() {
+            document.querySelectorAll('.time-interval').forEach(btn => btn.classList.remove('active'));
+            this.classList.add('active');
+            currentInterval = this.dataset.interval;
+            setDatesFromInterval(currentInterval);
+            updateData(currentInterval);
+        });
+    });
+
+    document.getElementById('customStartDate').addEventListener('change', function() {
+        var startDate = this.value;
+        var endDate = document.getElementById('customEndDate').value;
+        if (startDate && endDate) {
+            document.querySelectorAll('.time-interval').forEach(btn => btn.classList.remove('active'));
+            currentInterval = 'custom';
+            updateData('custom', startDate, endDate);
+        }
+    });
+
+    document.getElementById('customEndDate').addEventListener('change', function() {
+        var startDate = document.getElementById('customStartDate').value;
+        var endDate = this.value;
+        if (startDate && endDate) {
+            document.querySelectorAll('.time-interval').forEach(btn => btn.classList.remove('active'));
+            currentInterval = 'custom';
+            updateData('custom', startDate, endDate);
+        }
+    });
+
+    document.getElementById('resetDates').addEventListener('click', function() {
+        document.querySelectorAll('.time-interval').forEach(btn => btn.classList.remove('active'));
+        document.querySelector('.time-interval[data-interval="30"]').classList.add('active');
+        currentInterval = 30;
+        setDatesFromInterval(30);
+        updateData(30);
+    });
+
+    // Training buttons
+    function setupTrainingButtons() {
+        document.querySelectorAll('.train-chatbot').forEach(button => {
+            button.addEventListener('click', function() {
+                openTrainingModal(this.getAttribute('data-thread-id'));
+            });
+        });
+    }
+
+    function openTrainingModal(threadId) {
+        document.getElementById('trainingThreadId').value = threadId;
+        fetch(`/api/conversation/${threadId}`)
+            .then(response => response.json())
+            .then(data => {
+                var container = document.getElementById('trainingConversation');
+                container.innerHTML = data.messages.map(msg => `
+                    <div class="message ${msg.role === 'user' ? 'user-message' : 'bot-message'}">
+                        <div class="message-content">${msg.content}</div>
+                        <div class="message-timestamp">${msg.timestamp}</div>
+                    </div>
+                `).join('');
+                new bootstrap.Modal(document.getElementById('trainingModal')).show();
+            });
+    }
+
+    document.getElementById('trainingForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        var question = document.getElementById('trainingQuestion').value;
+        var answer = document.getElementById('trainingAnswer').value;
+        fetch('/api/kb', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+            body: JSON.stringify({ question: question, answer: answer })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success || data.id) {
+                createToast('Vidensbase opdateret!', 'success');
+                bootstrap.Modal.getInstance(document.getElementById('trainingModal')).hide();
+                document.getElementById('trainingForm').reset();
+            } else {
+                createToast('Fejl: ' + (data.message || 'Ukendt fejl'), 'danger');
+            }
+        })
+        .catch(() => createToast('Der opstod en fejl', 'danger'));
+    });
+
+    // Knowledge Gap Modal
+    function setupKnowledgeGapButtons() {
+        document.querySelectorAll('.view-knowledge-gap').forEach(button => {
+            button.addEventListener('click', function() {
+                loadKnowledgeGapConversations(this.getAttribute('data-thread-id'));
+                new bootstrap.Modal(document.getElementById('knowledgeGapModal')).show();
+            });
+        });
+    }
+
+    function loadKnowledgeGapConversations(selectedThreadId) {
+        fetch(`/api/knowledge_gap_conversations?interval=${getEffectiveInterval()}`)
+            .then(response => response.json())
+            .then(data => {
+                var sidebar = document.getElementById('knowledgeGapSidebar');
+                if (!data.conversations || data.conversations.length === 0) {
+                    sidebar.innerHTML = '<div class="p-3 text-center text-muted">Ingen videnshuller i denne periode</div>';
+                    return;
+                }
+                sidebar.innerHTML = '<ul class="conversation-list">' +
+                    data.conversations.map(conv => `
+                        <li class="${conv.thread_id === selectedThreadId ? 'active' : ''}">
+                            <a href="#" class="conversation-link" data-thread-id="${conv.thread_id}">
+                                <span class="conversation-info">
+                                    <span class="conversation-number">Samtale ${conv.conversation_number}</span>
+                                    <span class="conversation-time">${conv.timestamp}</span>
+                                </span>
+                            </a>
+                        </li>
+                    `).join('') + '</ul>';
+                var firstThreadId = selectedThreadId || (data.conversations[0] ? data.conversations[0].thread_id : null);
+                if (firstThreadId) {
+                    loadConversation(firstThreadId);
+                    if (!selectedThreadId) sidebar.querySelector('li').classList.add('active');
+                }
+            });
+    }
+
+    function loadConversation(threadId, type) {
+        fetch(`/api/conversation/${threadId}`)
+            .then(response => response.json())
+            .then(data => {
+                var container = type === 'feedback' ? document.getElementById('feedbackMessages') : document.getElementById('knowledgeGapMessages');
+                container.innerHTML = data.messages.map(msg => `
+                    <div class="message ${msg.role === 'user' ? 'user-message' : 'bot-message'}">
+                        <div class="message-content">${msg.content}</div>
+                        <div class="message-timestamp">${msg.timestamp}</div>
+                    </div>
+                `).join('');
+                loadComments(threadId, type);
+            });
+    }
+
+    function loadComments(threadId, type) {
+        fetch(`/api/comments/${threadId}`)
+            .then(response => response.json())
+            .then(data => {
+                var container = type === 'feedback' ? document.getElementById('feedbackComments') : document.getElementById('knowledgeGapComments');
+                container.innerHTML = data.comments.map(c => `
+                    <div class="comment">
+                        <strong>${c.user}</strong> - <small class="text-muted">${c.timestamp}</small>
+                        <p class="mb-0 mt-1">${c.content}</p>
+                    </div>
+                `).join('');
+            });
+    }
+
+    document.getElementById('knowledgeGapSidebar').addEventListener('click', function(e) {
+        var link = e.target.closest('.conversation-link');
+        if (link) {
+            e.preventDefault();
+            loadConversation(link.getAttribute('data-thread-id'));
+            this.querySelectorAll('li').forEach(li => li.classList.remove('active'));
+            link.closest('li').classList.add('active');
+        }
+    });
+
+    // Feedback Modal
+    document.getElementById('viewFeedbackConversations').addEventListener('click', function() {
+        loadFeedbackConversations();
+        new bootstrap.Modal(document.getElementById('feedbackModal')).show();
+    });
+
+    function loadFeedbackConversations(selectedThreadId) {
+        fetch(`/api/feedback_conversations?interval=${getEffectiveInterval()}`)
+            .then(response => response.json())
+            .then(data => {
+                var sidebar = document.getElementById('feedbackSidebar');
+                sidebar.innerHTML = '<ul class="conversation-list">' +
+                    data.conversations.map(conv => `
+                        <li class="${conv.thread_id === selectedThreadId ? 'active' : ''}">
+                            <a href="#" class="conversation-link" data-thread-id="${conv.thread_id}">
+                                <span class="conversation-info">
+                                    <span class="conversation-number">Samtale ${conv.conversation_number}</span>
+                                    <span class="conversation-time">${conv.last_message_time}</span>
+                                </span>
+                                ${getFeedbackIcon(conv.feedback)}
+                            </a>
+                        </li>
+                    `).join('') + '</ul>';
+                if (data.conversations.length > 0) {
+                    loadConversation(selectedThreadId || data.conversations[0].thread_id, 'feedback');
+                }
+            });
+    }
+
+    function getFeedbackIcon(feedback) {
+        const emojis = { 1: '😠', 2: '☹️', 3: '😐', 4: '😃', 5: '🤩' };
+        const descriptions = { 1: 'Forfærdelig', 2: 'Dårlig', 3: 'Okay', 4: 'God', 5: 'Fantastisk' };
+        return `<span style="font-size: 20px;" title="${descriptions[feedback] || ''}">${emojis[feedback] || ''}</span>`;
+    }
+
+    document.getElementById('feedbackSidebar').addEventListener('click', function(e) {
+        var link = e.target.closest('.conversation-link');
+        if (link) {
+            e.preventDefault();
+            loadConversation(link.getAttribute('data-thread-id'), 'feedback');
+            this.querySelectorAll('li').forEach(li => li.classList.remove('active'));
+            link.closest('li').classList.add('active');
+        }
+    });
+
+    // Comment forms
+    document.getElementById('knowledgeGapCommentForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        var activeLink = document.querySelector('#knowledgeGapSidebar li.active .conversation-link');
+        if (activeLink) addComment(activeLink.getAttribute('data-thread-id'), this.querySelector('textarea').value, 'knowledgeGap');
+    });
+
+    document.getElementById('feedbackCommentForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        var activeLink = document.querySelector('#feedbackSidebar li.active .conversation-link');
+        if (activeLink) addComment(activeLink.getAttribute('data-thread-id'), this.querySelector('textarea').value, 'feedback');
+    });
+
+    function addComment(threadId, comment, type) {
+        fetch(`/api/add_comment/${threadId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+            body: JSON.stringify({ comment: comment })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                loadComments(threadId, type === 'feedback' ? 'feedback' : null);
+                document.getElementById(type === 'feedback' ? 'feedbackCommentForm' : 'knowledgeGapCommentForm').reset();
+            }
+        });
+    }
+
+    setupKnowledgeGapButtons();
+    setupTrainingButtons();
+    updateData(currentInterval);
+
+    // ── Knowledge Gap AI Analysis ──────────────────────────────────────────
+    function renderRecommendationCards(recs) {
+        if (!recs || recs.length === 0) {
+            return '<p class="text-muted text-center py-3">Ingen anbefalinger fundet.</p>';
+        }
+        return recs.map((rec, i) => `
+            <div class="d-flex align-items-start gap-3 p-3 mb-2 rounded" style="background: var(--bg-card); border: 1px solid var(--border-color);">
+                <div class="flex-shrink-0 d-flex align-items-center justify-content-center rounded-circle bg-primary text-white fw-bold" style="width:2rem;height:2rem;font-size:0.85rem;">${i + 1}</div>
+                <p class="mb-0">${rec}</p>
+            </div>
+        `).join('');
+    }
+
+    document.querySelectorAll('#gapAnalysisTabs .nav-link').forEach(tab => {
+        tab.addEventListener('click', function() {
+            document.querySelectorAll('#gapAnalysisTabs .nav-link').forEach(t => t.classList.remove('active'));
+            this.classList.add('active');
+            const which = this.dataset.tab;
+            document.getElementById('gapPanelNew').classList.toggle('d-none', which !== 'new');
+            document.getElementById('gapPanelHistory').classList.toggle('d-none', which !== 'history');
+            if (which === 'history') loadGapAnalysisHistory();
+        });
+    });
+
+    function loadGapAnalysisHistory() {
+        document.getElementById('gapHistoryLoading').classList.remove('d-none');
+        document.getElementById('gapHistoryEmpty').classList.add('d-none');
+        document.getElementById('gapHistoryError').classList.add('d-none');
+        document.getElementById('gapHistoryAccordion').innerHTML = '';
+
+        fetch('/api/knowledge_gap_analysis_history')
+            .then(r => r.json())
+            .then(data => {
+                document.getElementById('gapHistoryLoading').classList.add('d-none');
+                if (data.error) {
+                    document.getElementById('gapHistoryError').classList.remove('d-none');
+                    return;
+                }
+                const history = data.history || [];
+                if (history.length === 0) {
+                    document.getElementById('gapHistoryEmpty').classList.remove('d-none');
+                    return;
+                }
+                const accordion = document.getElementById('gapHistoryAccordion');
+                accordion.innerHTML = history.map((item, idx) => `
+                    <div class="accordion-item">
+                        <h2 class="accordion-header">
+                            <button class="accordion-button ${idx > 0 ? 'collapsed' : ''}" type="button"
+                                data-bs-toggle="collapse" data-bs-target="#gapHistItem${item.id}">
+                                <span class="me-auto">
+                                    <i class="fas fa-magic me-2 text-primary"></i>${item.created_at}
+                                </span>
+                                <span class="badge bg-secondary ms-3 me-3">${item.interval_label}</span>
+                                <span class="text-muted small">${item.conversations_analyzed} samtaler</span>
+                            </button>
+                        </h2>
+                        <div id="gapHistItem${item.id}" class="accordion-collapse collapse ${idx === 0 ? 'show' : ''}">
+                            <div class="accordion-body">
+                                <p class="text-muted small mb-3">
+                                    Analyserede ${item.conversations_analyzed} ud af ${item.total_conversations} samtaler med videnshuller
+                                </p>
+                                ${renderRecommendationCards(item.recommendations)}
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+            })
+            .catch(() => {
+                document.getElementById('gapHistoryLoading').classList.add('d-none');
+                document.getElementById('gapHistoryError').classList.remove('d-none');
+            });
+    }
+
+    document.getElementById('analyzeGapsBtn').addEventListener('click', function() {
+        document.querySelectorAll('#gapAnalysisTabs .nav-link').forEach(t => t.classList.remove('active'));
+        document.getElementById('gapTabNew').classList.add('active');
+        document.getElementById('gapPanelNew').classList.remove('d-none');
+        document.getElementById('gapPanelHistory').classList.add('d-none');
+        document.getElementById('gapAnalysisIdle').classList.remove('d-none');
+        document.getElementById('gapAnalysisLoading').classList.add('d-none');
+        document.getElementById('gapAnalysisError').classList.add('d-none');
+        document.getElementById('gapAnalysisResults').classList.add('d-none');
+        document.getElementById('gapAnalysisFooter').classList.add('d-none');
+        new bootstrap.Modal(document.getElementById('gapAnalysisModal')).show();
+    });
+
+    document.getElementById('startGapAnalysisBtn').addEventListener('click', function() {
+        document.getElementById('gapAnalysisIdle').classList.add('d-none');
+        document.getElementById('gapAnalysisLoading').classList.remove('d-none');
+        document.getElementById('gapAnalysisError').classList.add('d-none');
+        document.getElementById('gapAnalysisResults').classList.add('d-none');
+        document.getElementById('gapAnalysisFooter').classList.add('d-none');
+        document.getElementById('gapAnalysisLoadingTitle').textContent = 'Analyserer videnshuller...';
+        document.getElementById('gapAnalysisLoadingMsg').textContent = 'Gennemlæser alle samtaler med manglende information';
+
+        const loadingMessages = [
+            { title: 'Indlæser samtaler...', msg: 'Henter alle samtaler med videnshuller' },
+            { title: 'Analyserer mønstre...', msg: 'AI gennemgår hvad brugerne har spurgt om' },
+            { title: 'Identificerer huller...', msg: 'Finder tilbagevendende emner uden svar' },
+            { title: 'Formulerer anbefalinger...', msg: 'Opsummerer de vigtigste forbedringer' }
+        ];
+        let msgIndex = 0;
+        const loadingInterval = setInterval(() => {
+            msgIndex = (msgIndex + 1) % loadingMessages.length;
+            var el = document.getElementById('gapAnalysisLoadingTitle');
+            var msgEl = document.getElementById('gapAnalysisLoadingMsg');
+            if (el && msgEl) {
+                el.textContent = loadingMessages[msgIndex].title;
+                msgEl.textContent = loadingMessages[msgIndex].msg;
+            }
+        }, 2500);
+
+        fetch(`/api/analyze_knowledge_gaps?interval=${getEffectiveInterval()}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken }
+        })
+        .then(response => response.json())
+        .then(data => {
+            clearInterval(loadingInterval);
+            document.getElementById('gapAnalysisLoading').classList.add('d-none');
+            if (data.error) {
+                document.getElementById('gapAnalysisErrorMsg').textContent = data.error;
+                document.getElementById('gapAnalysisError').classList.remove('d-none');
+                document.getElementById('gapAnalysisFooter').classList.remove('d-none');
+                return;
+            }
+            const analyzed = data.conversations_analyzed;
+            let metaText = `Baseret på analyse af ${analyzed} samtale${analyzed !== 1 ? 'r' : ''} med videnshuller`;
+            if (data.truncation_note) metaText += data.truncation_note;
+            document.getElementById('gapAnalysisMeta').textContent = metaText;
+            document.getElementById('gapAnalysisRecommendations').innerHTML = renderRecommendationCards(data.recommendations || []);
+            document.getElementById('gapAnalysisResults').classList.remove('d-none');
+            document.getElementById('gapAnalysisFooter').classList.remove('d-none');
+        })
+        .catch(() => {
+            clearInterval(loadingInterval);
+            document.getElementById('gapAnalysisLoading').classList.add('d-none');
+            document.getElementById('gapAnalysisErrorMsg').textContent = 'Analysen mislykkedes. Tjek din internetforbindelse og prøv igen.';
+            document.getElementById('gapAnalysisError').classList.remove('d-none');
+            document.getElementById('gapAnalysisFooter').classList.remove('d-none');
+        });
+    });
+});
+</script>
+{% endblock %}

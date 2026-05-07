@@ -1,0 +1,381 @@
+{% extends "base.html" %}
+{% block title %}Business Central – JKF{% endblock %}
+{% block page_title %}Business Central{% endblock %}
+
+{% block extra_css %}
+<style>
+    .test-result {
+        display: none;
+        margin-top: 0.75rem;
+        padding: 0.75rem 1rem;
+        border-radius: var(--radius);
+        font-size: 0.875rem;
+    }
+    .test-result.success { background: var(--success-light); color: var(--success); border: 1px solid var(--success); }
+    .test-result.danger  { background: var(--danger-light);  color: var(--danger);  border: 1px solid var(--danger); }
+
+    .credentials-hint {
+        font-size: 0.8rem; color: var(--text-muted);
+        display: block; margin-top: 0.3rem;
+    }
+    .section-divider {
+        border-top: 1px solid var(--border-color);
+        margin: 1.5rem 0;
+    }
+</style>
+{% endblock %}
+
+{% block main_content %}
+<!-- Breadcrumb -->
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb" style="font-size:.875rem;">
+        <li class="breadcrumb-item"><a href="{{ url_for('integrations') }}">Integrationer</a></li>
+        <li class="breadcrumb-item active">Business Central</li>
+    </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-start mb-4">
+    <div>
+        <h2 class="mb-1">Business Central</h2>
+        <p class="text-muted mb-0">
+            Forbind chatbotten til Microsoft Business Central (Cloud/SaaS) via Azure AD OAuth2.
+        </p>
+    </div>
+    <span class="badge {% if bc.enabled %}bg-success{% elif bc.config %}bg-warning text-dark{% else %}bg-secondary{% endif %} px-3 py-2" style="font-size:.8rem;">
+        {% if bc.enabled %}Aktiv{% elif bc.config %}Ikke aktiveret{% else %}Ikke konfigureret{% endif %}
+    </span>
+</div>
+
+<form method="POST" action="{{ url_for('integration_bc') }}" id="bcForm">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <div class="row g-4">
+
+        <!-- Left: Credentials -->
+        <div class="col-lg-7">
+            <div class="card h-100">
+                <div class="card-header"><h5 class="mb-0">Azure AD legitimationsoplysninger</h5></div>
+                <div class="card-body">
+                    <p class="text-muted mb-3" style="font-size:.875rem;">
+                        Opret en App Registration i
+                        <a href="https://portal.azure.com" target="_blank" rel="noopener">Azure Portal</a>
+                        med <strong>Dynamics 365 Business Central → API.ReadWrite.All</strong> tilladelse,
+                        og brug Client Credentials (client secret) flow.
+                    </p>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Tenant ID (Directory ID)
+                            <span class="credentials-hint">Fra Azure Portal → Azure Active Directory → Oversigt</span>
+                        </label>
+                        <input type="text" name="tenant_id" class="form-control font-monospace"
+                               value="{{ cfg.tenant_id or '' }}"
+                               placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" autocomplete="off">
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Client ID (Application ID)
+                            <span class="credentials-hint">Fra din App Registration → Oversigt</span>
+                        </label>
+                        <input type="text" name="client_id" class="form-control font-monospace"
+                               value="{{ cfg.client_id or '' }}"
+                               placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" autocomplete="off">
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Client Secret
+                            <span class="credentials-hint">Fra App Registration → Certifikater og hemmeligheder → Ny klienthemmelighed</span>
+                        </label>
+                        <div class="input-group">
+                            <input type="password" name="client_secret" id="clientSecretInput"
+                                   class="form-control font-monospace"
+                                   value="{{ '••••••••' if cfg.client_secret else '' }}"
+                                   placeholder="Indsæt client secret..." autocomplete="new-password">
+                            <button type="button" class="btn btn-outline-secondary" id="toggleSecret" title="Vis/skjul">
+                                <i class="fas fa-eye" id="toggleSecretIcon"></i>
+                            </button>
+                        </div>
+                        {% if cfg.client_secret %}
+                        <small class="text-muted">Lad feltet stå uændret for at beholde den gemte hemmelighed.</small>
+                        {% endif %}
+                    </div>
+
+                    <div class="section-divider"></div>
+
+                    <div class="row">
+                        <div class="col-sm-6 mb-3">
+                            <label class="form-label fw-semibold">Miljø
+                                <span class="credentials-hint">Normalt "production"</span>
+                            </label>
+                            <input type="text" name="environment" class="form-control"
+                                   value="{{ cfg.environment or 'production' }}"
+                                   placeholder="production">
+                        </div>
+                        <div class="col-sm-6 mb-3">
+                            <label class="form-label fw-semibold">Company ID
+                                <span class="credentials-hint">GUID fra BC → Virksomhedsoplysninger, eller brug "Test forbindelse" for at finde det</span>
+                            </label>
+                            <input type="text" name="company_id" class="form-control font-monospace"
+                                   value="{{ cfg.company_id or '' }}"
+                                   placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" autocomplete="off">
+                        </div>
+                    </div>
+
+                    <div class="section-divider"></div>
+
+                    <!-- Custom API -->
+                    <div class="mb-2 d-flex align-items-center gap-2">
+                        <h6 class="mb-0">Custom API <span class="badge bg-secondary fw-normal" style="font-size:.7rem;">Valgfri</span></h6>
+                    </div>
+                    <p class="text-muted mb-3" style="font-size:.8rem;">
+                        Udfyld kun disse felter hvis din BC-specialist har oprettet brugerdefinerede API-sider
+                        (f.eks. for ekstra sporingsfelter). Lad dem stå tomme for at bruge standardAPIen.
+                    </p>
+                    <div class="row">
+                        <div class="col-sm-4 mb-3">
+                            <label class="form-label fw-semibold" style="font-size:.875rem;">Publisher
+                                <span class="credentials-hint">F.eks. "jkf"</span>
+                            </label>
+                            <input type="text" name="custom_api_publisher" class="form-control font-monospace"
+                                   value="{{ cfg.custom_api_publisher or '' }}" placeholder="jkf">
+                        </div>
+                        <div class="col-sm-4 mb-3">
+                            <label class="form-label fw-semibold" style="font-size:.875rem;">Group
+                                <span class="credentials-hint">F.eks. "chatbot"</span>
+                            </label>
+                            <input type="text" name="custom_api_group" class="form-control font-monospace"
+                                   value="{{ cfg.custom_api_group or '' }}" placeholder="chatbot">
+                        </div>
+                        <div class="col-sm-4 mb-3">
+                            <label class="form-label fw-semibold" style="font-size:.875rem;">Version
+                                <span class="credentials-hint">F.eks. "v1.0"</span>
+                            </label>
+                            <input type="text" name="custom_api_version" class="form-control font-monospace"
+                                   value="{{ cfg.custom_api_version or '' }}" placeholder="v1.0">
+                        </div>
+                    </div>
+                    {% if cfg.custom_api_publisher and cfg.custom_api_group and cfg.custom_api_version %}
+                    <div class="bg-light rounded p-2 mb-3" style="font-size:.78rem;">
+                        <strong>Forventede entity-navne:</strong><br>
+                        <code>/api/{{ cfg.custom_api_publisher }}/{{ cfg.custom_api_group }}/{{ cfg.custom_api_version }}/companies(...)/items</code>
+                        <span class="text-success ms-1" style="font-size:.7rem;">✓ aktiv</span><br>
+                        <code>/api/{{ cfg.custom_api_publisher }}/{{ cfg.custom_api_group }}/{{ cfg.custom_api_version }}/companies(...)/salesShipmentsEx</code>
+                        <span class="text-success ms-1" style="font-size:.7rem;">✓ aktiv</span><br>
+                        <code>/api/{{ cfg.custom_api_publisher }}/{{ cfg.custom_api_group }}/{{ cfg.custom_api_version }}/companies(...)/Salesorderlines</code>
+                        <span class="text-success ms-1" style="font-size:.7rem;">✓ aktiv</span>
+                    </div>
+                    {% endif %}
+
+                    <!-- Test connection -->
+                    <div class="section-divider"></div>
+                    <button type="button" class="btn btn-outline-primary" id="testBtn">
+                        <i class="fas fa-plug me-2"></i>Test forbindelse
+                    </button>
+                    <div class="test-result" id="testResult"></div>
+
+                    <!-- Company picker (shown after successful test) -->
+                    <div id="companyPicker" style="display:none;" class="mt-3">
+                        <label class="form-label fw-semibold">Vælg virksomhed</label>
+                        <select class="form-select" id="companySelect">
+                            <option value="">– vælg –</option>
+                        </select>
+                        <button type="button" class="btn btn-sm btn-outline-secondary mt-2" id="useCompanyBtn">
+                            Brug denne virksomhed
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right: Enable + info -->
+        <div class="col-lg-5 d-flex flex-column gap-4">
+
+            <!-- Enable toggle -->
+            <div class="card">
+                <div class="card-header"><h5 class="mb-0">Aktivering</h5></div>
+                <div class="card-body">
+                    <div class="form-check form-switch d-flex align-items-center gap-3 mb-0" style="padding-left:0;">
+                        <input type="checkbox" name="enabled" id="enabledSwitch"
+                               class="form-check-input" role="switch" style="width:2.5rem;height:1.25rem;margin:0;"
+                               {{ 'checked' if bc.enabled }}>
+                        <label class="form-check-label" for="enabledSwitch">
+                            <span class="fw-semibold">Aktiver Business Central integration</span><br>
+                            <small class="text-muted">Chatbotten bruger kun BC data, når dette er slået til.</small>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Save -->
+            <button type="submit" class="btn btn-primary w-100">
+                <i class="fas fa-save me-2"></i>Gem indstillinger
+            </button>
+
+            <!-- Item cache sync -->
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">Varecache</h5>
+                    <span class="badge bg-secondary" id="cacheCountBadge" style="font-size:.75rem;">indlæser…</span>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted mb-3" style="font-size:.875rem;">
+                        Henter alle varer fra BC custom API og gemmer dem lokalt, så chatbotten
+                        kan svare på lagerspørgsmål via varebeskrivelse. Kræver at Custom API er konfigureret.
+                    </p>
+                    <div class="mb-2" style="font-size:.8rem; color: var(--text-muted);" id="cacheLastSynced">
+                        Seneste sync: –
+                    </div>
+                    <button type="button" class="btn btn-outline-secondary w-100" id="syncItemsBtn"
+                            {% if not bc.enabled %}disabled title="Aktiver integrationen først"{% endif %}>
+                        <i class="fas fa-sync-alt me-2"></i>Sync varer nu
+                    </button>
+                    <div class="test-result mt-2" id="syncResult"></div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</form>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const csrfToken = document.querySelector('meta[name=csrf-token]').getAttribute('content');
+
+// Toggle secret visibility
+document.getElementById('toggleSecret').addEventListener('click', function () {
+    const inp = document.getElementById('clientSecretInput');
+    const icon = document.getElementById('toggleSecretIcon');
+    if (inp.type === 'password') {
+        inp.type = 'text';
+        icon.className = 'fas fa-eye-slash';
+    } else {
+        inp.type = 'password';
+        icon.className = 'fas fa-eye';
+    }
+});
+
+// Test connection
+document.getElementById('testBtn').addEventListener('click', async function () {
+    const btn = this;
+    const resultEl = document.getElementById('testResult');
+    const pickerEl = document.getElementById('companyPicker');
+    const selectEl = document.getElementById('companySelect');
+
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Tester…';
+    resultEl.style.display = 'none';
+    pickerEl.style.display = 'none';
+
+    const payload = {
+        tenant_id:     document.querySelector('[name=tenant_id]').value.trim(),
+        client_id:     document.querySelector('[name=client_id]').value.trim(),
+        client_secret: document.querySelector('[name=client_secret]').value.trim(),
+        environment:   document.querySelector('[name=environment]').value.trim() || 'production',
+        company_id:    document.querySelector('[name=company_id]').value.trim(),
+    };
+
+    try {
+        const resp = await fetch('/api/integrations/business-central/test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+            body: JSON.stringify(payload),
+        });
+        const data = await resp.json();
+
+        resultEl.textContent = data.message;
+        resultEl.className = `test-result ${data.success ? 'success' : 'danger'}`;
+        resultEl.style.display = 'block';
+
+        if (data.success && data.companies && data.companies.length > 1) {
+            // Populate company picker when multiple companies are returned
+            selectEl.innerHTML = '<option value="">– vælg –</option>';
+            data.companies.forEach(c => {
+                const opt = document.createElement('option');
+                opt.value = c.id;
+                opt.textContent = `${c.name} (${c.id})`;
+                selectEl.appendChild(opt);
+            });
+            pickerEl.style.display = 'block';
+        } else if (data.success && data.companies && data.companies.length === 1) {
+            // Auto-fill when exactly one company
+            document.querySelector('[name=company_id]').value = data.companies[0].id;
+        }
+    } catch (e) {
+        resultEl.textContent = 'Netværksfejl: ' + e.message;
+        resultEl.className = 'test-result danger';
+        resultEl.style.display = 'block';
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-plug me-2"></i>Test forbindelse';
+    }
+});
+
+// Use selected company
+document.getElementById('useCompanyBtn').addEventListener('click', function () {
+    const val = document.getElementById('companySelect').value;
+    if (val) {
+        document.querySelector('[name=company_id]').value = val;
+        document.getElementById('companyPicker').style.display = 'none';
+        createToast('Company ID udfyldt', 'success');
+    }
+});
+
+// Load cache status on page load
+async function loadCacheStatus() {
+    try {
+        const resp = await fetch('/api/integrations/business-central/item-cache-status', {
+            headers: { 'X-CSRFToken': csrfToken },
+        });
+        const data = await resp.json();
+        const badge = document.getElementById('cacheCountBadge');
+        const lastSynced = document.getElementById('cacheLastSynced');
+        if (data.cached_items > 0) {
+            badge.textContent = data.cached_items.toLocaleString('da-DK') + ' varer';
+            badge.className = 'badge bg-success';
+        } else {
+            badge.textContent = 'Ingen varer cachet';
+            badge.className = 'badge bg-warning text-dark';
+        }
+        if (data.last_synced) {
+            const d = new Date(data.last_synced);
+            lastSynced.textContent = 'Seneste sync: ' + d.toLocaleString('da-DK');
+        } else {
+            lastSynced.textContent = 'Seneste sync: aldrig';
+        }
+    } catch (e) {
+        document.getElementById('cacheCountBadge').textContent = 'ukendt';
+    }
+}
+loadCacheStatus();
+
+// Sync items button
+document.getElementById('syncItemsBtn').addEventListener('click', async function () {
+    const btn = this;
+    const resultEl = document.getElementById('syncResult');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Synkroniserer…';
+    resultEl.style.display = 'none';
+
+    try {
+        const resp = await fetch('/api/integrations/business-central/sync-items', {
+            method: 'POST',
+            headers: { 'X-CSRFToken': csrfToken },
+        });
+        const data = await resp.json();
+        resultEl.textContent = data.success
+            ? `✓ ${(data.count || 0).toLocaleString('da-DK')} varer synkroniseret`
+            : (data.message || 'Sync fejlede');
+        resultEl.className = `test-result ${data.success ? 'success' : 'danger'}`;
+        resultEl.style.display = 'block';
+        if (data.success) loadCacheStatus();
+    } catch (e) {
+        resultEl.textContent = 'Netværksfejl: ' + e.message;
+        resultEl.className = 'test-result danger';
+        resultEl.style.display = 'block';
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-sync-alt me-2"></i>Sync varer nu';
+    }
+});
+</script>
+{% endblock %}

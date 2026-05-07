@@ -1,0 +1,225 @@
+{% extends "base.html" %}
+{% block title %}Dashboard – JKF{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+
+{% block extra_css %}
+<style>
+    .conversation-row {
+        color: inherit;
+        transition: background 0.15s;
+        border-bottom: 1px solid var(--border-color);
+    }
+    .conversation-row:last-child { border-bottom: none; }
+    .conversation-row:hover { background: var(--bg-hover); }
+
+    .conv-avatar {
+        width: 40px; height: 40px; flex-shrink: 0;
+        border-radius: 50%;
+        background: var(--primary-light);
+        display: flex; align-items: center; justify-content: center;
+    }
+    .conv-preview {
+        font-size: 0.8rem;
+        color: var(--text-muted);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 380px;
+    }
+    .conv-meta {
+        display: flex; flex-direction: column; align-items: flex-end; gap: 0.2rem;
+        flex-shrink: 0;
+    }
+    .msg-badge {
+        font-size: 0.7rem; font-weight: 600;
+        background: var(--bg-page);
+        border: 1px solid var(--border-color);
+        border-radius: 999px;
+        padding: 0.1rem 0.5rem;
+        color: var(--text-muted);
+        white-space: nowrap;
+    }
+
+    /* Quick action cards */
+    .action-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.75rem;
+        padding: 1rem;
+    }
+    .action-card {
+        display: flex; flex-direction: column; gap: 0.5rem;
+        padding: 1rem;
+        border-radius: var(--radius);
+        border: 1px solid var(--border-color);
+        background: var(--bg-page);
+        text-decoration: none;
+        color: inherit;
+        transition: var(--transition);
+    }
+    .action-card:hover {
+        border-color: var(--primary);
+        box-shadow: 0 2px 10px rgba(26,86,219,.1);
+        background: var(--bg-card);
+        color: inherit;
+    }
+    .action-card-icon {
+        width: 36px; height: 36px;
+        border-radius: var(--radius-sm);
+        display: flex; align-items: center; justify-content: center;
+        font-size: 0.95rem;
+    }
+    .action-card-label {
+        font-size: 0.8rem; font-weight: 600;
+        line-height: 1.2;
+    }
+    .action-card-desc {
+        font-size: 0.72rem;
+        color: var(--text-muted);
+        line-height: 1.3;
+    }
+
+    [data-theme="dark"] .action-card { background: var(--bg-hover); }
+    [data-theme="dark"] .action-card:hover { background: var(--bg-card); }
+    [data-theme="dark"] .msg-badge { background: var(--bg-hover); }
+</style>
+{% endblock %}
+
+{% block main_content %}
+<div class="mb-4">
+    <h2 class="mb-1">Velkommen tilbage, {{ user.username }}</h2>
+    <p class="text-muted mb-0">Her er et overblik over JKF chatbottens samtaler</p>
+</div>
+
+<!-- Stats Cards -->
+<div class="row g-4 mb-4">
+    <div class="col-md-4">
+        <div class="stat-card">
+            <div class="stat-card-header">
+                <div class="stat-card-icon primary"><i class="fas fa-comments"></i></div>
+            </div>
+            <div class="stat-card-label">Samtaler i dag</div>
+            <div class="stat-card-value">{{ conversations_today }}</div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="stat-card">
+            <div class="stat-card-header">
+                <div class="stat-card-icon success"><i class="fas fa-calendar-week"></i></div>
+            </div>
+            <div class="stat-card-label">Samtaler denne uge</div>
+            <div class="stat-card-value">{{ conversations_week }}</div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="stat-card">
+            <div class="stat-card-header">
+                <div class="stat-card-icon warning"><i class="fas fa-calendar-alt"></i></div>
+            </div>
+            <div class="stat-card-label">Samtaler denne måned</div>
+            <div class="stat-card-value">{{ conversations_month }}</div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4">
+    <!-- Recent Conversations -->
+    <div class="col-lg-8">
+        <div class="card h-100">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Seneste samtaler</h5>
+                <a href="{{ url_for('all_conversations') }}" class="btn btn-sm btn-outline-primary">Se alle</a>
+            </div>
+            <div class="card-body p-0">
+                {% if recent_conversations %}
+                {% for conv in recent_conversations %}
+                <a href="{{ url_for('conversation', thread_id=conv.thread_id) }}"
+                   class="d-flex align-items-center gap-3 px-4 py-3 text-decoration-none conversation-row">
+                    <div class="conv-avatar">
+                        <i class="fas fa-comment-alt" style="color:var(--primary);font-size:0.875rem;"></i>
+                    </div>
+                    <div style="flex:1;min-width:0;">
+                        <div class="fw-semibold" style="font-size:.875rem;">Samtale {{ conv.number }}</div>
+                        {% if conv.preview %}
+                        <div class="conv-preview">{{ conv.preview }}</div>
+                        {% endif %}
+                    </div>
+                    <div class="conv-meta">
+                        <small class="text-muted" style="font-size:.72rem;white-space:nowrap;">{{ conv.date|danish_datetime }}</small>
+                        <span class="msg-badge">{{ conv.msg_count }} spørgsmål</span>
+                    </div>
+                    <i class="fas fa-chevron-right text-muted ms-1" style="font-size:0.7rem;flex-shrink:0;"></i>
+                </a>
+                {% endfor %}
+                {% else %}
+                <div class="empty-state p-5">
+                    <div class="empty-state-icon"><i class="fas fa-comments"></i></div>
+                    <div class="empty-state-title">Ingen samtaler endnu</div>
+                    <div class="empty-state-text">Nye samtaler vil blive vist her</div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="col-lg-4">
+        <div class="card h-100">
+            <div class="card-header">
+                <h5 class="mb-0">Genveje</h5>
+            </div>
+            <div class="action-grid">
+
+                <a href="{{ url_for('analytics') }}" class="action-card">
+                    <div class="action-card-icon" style="background:#e8f0fe;">
+                        <i class="fas fa-chart-line" style="color:#1a56db;"></i>
+                    </div>
+                    <div class="action-card-label">Analytics</div>
+                    <div class="action-card-desc">Statistik og tendenser</div>
+                </a>
+
+                <a href="{{ url_for('documents_page') }}" class="action-card">
+                    <div class="action-card-icon" style="background:#def7ec;">
+                        <i class="fas fa-folder-open" style="color:#0e9f6e;"></i>
+                    </div>
+                    <div class="action-card-label">Vidensbase</div>
+                    <div class="action-card-desc">Upload og administrér dokumenter</div>
+                </a>
+
+                <a href="{{ url_for('integrations') }}" class="action-card">
+                    <div class="action-card-icon" style="background:#fce8f3;">
+                        <i class="fas fa-plug" style="color:#e74694;"></i>
+                    </div>
+                    <div class="action-card-label">Integrationer</div>
+                    <div class="action-card-desc">Business Central m.fl.</div>
+                </a>
+
+                <a href="{{ url_for('settings') }}" class="action-card">
+                    <div class="action-card-icon" style="background:#fdf6b2;">
+                        <i class="fas fa-cog" style="color:#c27803;"></i>
+                    </div>
+                    <div class="action-card-label">Indstillinger</div>
+                    <div class="action-card-desc">Chatbot og udseende</div>
+                </a>
+
+                <a href="{{ url_for('knowledge_base') }}" class="action-card">
+                    <div class="action-card-icon" style="background:#e3f0ff;">
+                        <i class="fas fa-graduation-cap" style="color:#2563eb;"></i>
+                    </div>
+                    <div class="action-card-label">Test & Træning</div>
+                    <div class="action-card-desc">Afprøv chatbotten</div>
+                </a>
+
+                <a href="{{ url_for('chatbot_demo') }}" target="_blank" class="action-card">
+                    <div class="action-card-icon" style="background:#f0fdf4;">
+                        <i class="fas fa-external-link-alt" style="color:#16a34a;"></i>
+                    </div>
+                    <div class="action-card-label">Demo side</div>
+                    <div class="action-card-desc">Se chatbotten live</div>
+                </a>
+
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

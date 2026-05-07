@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <title>{% block title %}JKF Dashboard{% endblock %}</title>
+    <script>
+        (function() {
+            var html = document.documentElement;
+            html.classList.add('preload');
+            if (localStorage.getItem('sidebarCollapsed') === 'true') {
+                html.classList.add('sidebar-collapsed');
+            }
+            var theme = localStorage.getItem('theme');
+            if (theme === 'dark') {
+                html.setAttribute('data-theme', 'dark');
+                html.style.backgroundColor = '#0f172a';
+                html.style.colorScheme = 'dark';
+            } else {
+                html.style.backgroundColor = '#f8fafc';
+            }
+            document.addEventListener('DOMContentLoaded', function() {
+                requestAnimationFrame(function() {
+                    requestAnimationFrame(function() {
+                        html.classList.remove('preload');
+                        html.style.backgroundColor = '';
+                        html.style.colorScheme = '';
+                    });
+                });
+            });
+        })();
+    </script>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <div class="toast-container"></div>
+
+    {% if hide_header %}
+    {% block content %}{% endblock %}
+    {% else %}
+    <div class="app-container">
+        <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <a href="{{ url_for('sales_chatbot') if (user and user.sales_only and not user.is_admin) else url_for('dashboard') }}" class="sidebar-header-link d-flex align-items-center text-decoration-none">
+                    <img src="https://jkfuniverse.com/static/images/Logo/JKFLOGOBLUE.png"
+                         alt="JKF" class="sidebar-jkf-logo">
+                    <span class="sidebar-brand ms-2" style="font-size:1rem;font-weight:700;">AI Platform</span>
+                </a>
+                <button class="sidebar-collapse-btn" id="sidebarCollapseBtn" title="Skjul sidebar">
+                    <i class="fas fa-chevron-left"></i>
+                </button>
+            </div>
+
+            <nav class="sidebar-nav">
+                {% if not (user and user.sales_only and not user.is_admin) %}
+                <div class="nav-section">
+                    <div class="nav-section-title">Overblik</div>
+                    <a href="{{ url_for('dashboard') }}" class="nav-item{{ ' active' if request.endpoint == 'dashboard' else '' }}" data-tooltip="Dashboard">
+                        <i class="fas fa-tachometer-alt"></i>
+                        <span class="nav-text">Dashboard</span>
+                    </a>
+                    <a href="{{ url_for('all_conversations') }}" class="nav-item{{ ' active' if request.endpoint in ['all_conversations', 'conversation'] else '' }}" data-tooltip="Samtaler">
+                        <i class="fas fa-comments"></i>
+                        <span class="nav-text">Samtaler</span>
+                    </a>
+                    <a href="{{ url_for('analytics') }}" class="nav-item{{ ' active' if request.endpoint == 'analytics' else '' }}" data-tooltip="Analytics">
+                        <i class="fas fa-chart-line"></i>
+                        <span class="nav-text">Analytics</span>
+                    </a>
+                </div>
+
+                <div class="nav-section">
+                    <div class="nav-section-title">Chatbot</div>
+                    <a href="{{ url_for('knowledge_base') }}" class="nav-item{{ ' active' if request.endpoint == 'knowledge_base' else '' }}" data-tooltip="Test & Træning">
+                        <i class="fas fa-graduation-cap"></i>
+                        <span class="nav-text">Test & Træning</span>
+                    </a>
+                    <a href="{{ url_for('documents_page') }}" class="nav-item{{ ' active' if request.endpoint == 'documents_page' else '' }}" data-tooltip="Vidensbase">
+                        <i class="fas fa-folder-open"></i>
+                        <span class="nav-text">Vidensbase</span>
+                    </a>
+                    <a href="{{ url_for('integrations') }}" class="nav-item{{ ' active' if request.endpoint in ['integrations', 'integration_bc', 'integration_dw'] else '' }}" data-tooltip="Integrationer">
+                        <i class="fas fa-plug"></i>
+                        <span class="nav-text">Integrationer</span>
+                    </a>
+                    <a href="{{ url_for('settings') }}" class="nav-item{{ ' active' if request.endpoint == 'settings' else '' }}" data-tooltip="Indstillinger">
+                        <i class="fas fa-cog"></i>
+                        <span class="nav-text">Indstillinger</span>
+                    </a>
+                </div>
+                {% endif %}
+
+                {% if user and (user.can_access_sales_chatbot or user.is_admin) %}
+                <div class="nav-section">
+                    <div class="nav-section-title">Salg</div>
+                    <a href="{{ url_for('sales_chatbot') }}" class="nav-item{{ ' active' if request.endpoint == 'sales_chatbot' else '' }}" data-tooltip="Salgs-assistent">
+                        <i class="fas fa-chart-bar"></i>
+                        <span class="nav-text">Salgs-assistent</span>
+                    </a>
+                </div>
+                {% endif %}
+
+                {% if user and user.is_admin %}
+                <div class="nav-section">
+                    <div class="nav-section-title">Administration</div>
+                    <a href="{{ url_for('admin') }}" class="nav-item{{ ' active' if request.endpoint == 'admin' else '' }}" data-tooltip="Brugere">
+                        <i class="fas fa-users"></i>
+                        <span class="nav-text">Brugere</span>
+                    </a>
+                </div>
+                {% endif %}
+            </nav>
+
+            <div class="sidebar-footer">
+                {% if user %}
+                <div class="user-menu" id="userMenuDropdown" data-bs-toggle="dropdown" aria-expanded="false">
+                    <div class="user-avatar">
+                        {{ user.username[0]|upper }}
+                    </div>
+                    <div class="user-info nav-text">
+                        <div class="user-name">{{ user.username }}</div>
+                        <div class="user-role">{{ 'Administrator' if user.is_admin else ('Kun salgs-assistent' if user.sales_only else ('Salgs-bruger' if user.can_access_sales_chatbot else 'Bruger')) }}</div>
+                    </div>
+                    <button class="header-btn ms-auto nav-text" id="darkModeToggle" title="Skift tema" style="padding: 0.375rem;">
+                        <i class="fas fa-moon" id="darkModeIcon" style="font-size: 0.9rem;"></i>
+                    </button>
+                </div>
+                <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userMenuDropdown" style="width: 100%; margin-top: 0.5rem;">
+                    <li><a class="dropdown-item" href="{{ url_for('logout') }}"><i class="fas fa-sign-out-alt me-2"></i>Log ud</a></li>
+                </ul>
+                {% else %}
+                <a href="{{ url_for('logout') }}" class="nav-item" data-tooltip="Log ud">
+                    <i class="fas fa-sign-out-alt"></i>
+                    <span class="nav-text">Log ud</span>
+                </a>
+                {% endif %}
+            </div>
+        </aside>
+
+        <main class="main-content" id="mainContent">
+            <div class="content-area">
+                {% block main_content %}{% endblock %}
+            </div>
+        </main>
+    </div>
+    {% endif %}
+
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Toast notification system
+        function createToast(message, category) {
+            const toastContainer = document.querySelector('.toast-container');
+            if (!toastContainer) return;
+            const toast = document.createElement('div');
+            toast.className = `toast custom-toast ${category} show`;
+            toast.setAttribute('role', 'alert');
+            toast.setAttribute('aria-live', 'assertive');
+            toast.setAttribute('aria-atomic', 'true');
+            const toastBody = document.createElement('div');
+            toastBody.className = 'toast-body d-flex align-items-center';
+            const icon = document.createElement('i');
+            const iconClass = category === 'success' ? 'check-circle' : category === 'warning' ? 'exclamation-triangle' : category === 'danger' ? 'times-circle' : 'info-circle';
+            icon.className = `fas fa-${iconClass} me-2`;
+            toastBody.appendChild(icon);
+            toastBody.appendChild(document.createTextNode(message));
+            toast.appendChild(toastBody);
+            toastContainer.appendChild(toast);
+            setTimeout(() => {
+                toast.classList.remove('show');
+                setTimeout(() => { if (toastContainer.contains(toast)) toastContainer.removeChild(toast); }, 300);
+            }, 5000);
+        }
+
+        // CSRF token in AJAX headers + flash messages as toasts
+        $(document).ready(function() {
+            const csrfToken = $('meta[name=csrf-token]').attr('content');
+            if (csrfToken) {
+                $.ajaxSetup({
+                    beforeSend: function(xhr, settings) {
+                        if (!/^(GET|HEAD|OPTIONS|TRACE)$/i.test(settings.type) && !this.crossDomain) {
+                            xhr.setRequestHeader('X-CSRFToken', csrfToken);
+                        }
+                    }
+                });
+            }
+
+            // Render server-side flash messages as toasts
+            {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+            {% for category, message in messages %}
+            createToast("{{ message|e }}", "{{ category }}");
+            {% endfor %}
+            {% endif %}
+            {% endwith %}
+        });
+    </script>
+    <script src="{{ url_for('static', filename='js/scripts.js') }}"></script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

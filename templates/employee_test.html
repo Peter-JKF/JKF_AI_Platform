@@ -1,0 +1,747 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JKF Chatbot – Test & Træning</title>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body, html {
+            width: 100%; height: 100%;
+            font-family: 'Roboto', Arial, sans-serif;
+            background-color: #f0f2f5;
+            display: flex; align-items: center; justify-content: center;
+        }
+
+        #chat-wrapper {
+            width: 100%; max-width: 520px;
+            height: 100vh; max-height: 800px;
+            display: flex; flex-direction: column;
+            background: #ffffff;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.12);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        @media (max-width: 560px) {
+            body { background: #fff; }
+            #chat-wrapper { max-width: 100%; max-height: 100vh; border-radius: 0; box-shadow: none; }
+        }
+
+        .chat-header {
+            background-color: var(--primary-color, #1a56db);
+            color: #ffffff;
+            padding: 15px;
+            display: flex; align-items: center; justify-content: center;
+            position: relative; min-height: 80px; flex-shrink: 0;
+        }
+        .header-logo { height: 55px; max-width: 200px; }
+        .header-status {
+            display: flex; flex-direction: column; align-items: flex-start;
+            position: absolute; left: 15px; top: 50%; transform: translateY(-50%);
+        }
+        .header-name { font-weight: bold; font-size: 13.5px; margin-bottom: 2px; }
+        .header-status-active { display: flex; align-items: center; gap: 5px; font-size: 13.5px; }
+        .status-dot {
+            width: 8px; height: 8px; background-color: #4CAF50; border-radius: 50%;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0%   { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(76,175,80,0.7); }
+            70%  { transform: scale(1);    box-shadow: 0 0 0 10px rgba(76,175,80,0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(76,175,80,0); }
+        }
+        .header-controls {
+            position: absolute; right: 14px; top: 50%; transform: translateY(-50%);
+            display: flex; align-items: center; gap: 8px;
+        }
+        .restart-btn, .guide-btn {
+            width: 34px; height: 34px;
+            background: rgba(255,255,255,0.15);
+            border: 1px solid rgba(255,255,255,0.25);
+            cursor: pointer; border-radius: 8px; color: white; font-size: 14px;
+            display: flex; align-items: center; justify-content: center;
+            transition: background-color 0.2s, border-color 0.2s;
+        }
+        .restart-btn:hover, .guide-btn:hover {
+            background-color: rgba(255,255,255,0.28);
+            border-color: rgba(255,255,255,0.45);
+        }
+
+        /* Guide modal */
+        .guide-modal-overlay {
+            display: none; position: fixed; inset: 0;
+            background: rgba(0,0,0,0.55); z-index: 1000;
+            align-items: center; justify-content: center; padding: 20px;
+        }
+        .guide-modal-overlay.open { display: flex; }
+        .guide-modal {
+            background: #fff; border-radius: 14px; width: 100%; max-width: 560px;
+            box-shadow: 0 12px 40px rgba(0,0,0,0.25); overflow: hidden;
+        }
+        .guide-modal-header {
+            background: var(--primary-color, #1a56db); color: #fff;
+            padding: 22px 24px; display: flex; align-items: center; gap: 14px;
+        }
+        .guide-modal-header-icon {
+            width: 42px; height: 42px; background: rgba(255,255,255,0.2);
+            border-radius: 50%; display: flex; align-items: center; justify-content: center;
+            font-size: 18px; flex-shrink: 0;
+        }
+        .guide-modal-header h2 { font-size: 17px; font-weight: 600; margin: 0; }
+        .guide-modal-header p { font-size: 13px; opacity: 0.85; margin: 3px 0 0; }
+        .guide-modal-body { padding: 24px; }
+        .guide-steps { list-style: none; display: flex; flex-direction: column; gap: 16px; }
+        .guide-step { display: flex; gap: 14px; align-items: flex-start; }
+        .guide-step-num {
+            width: 28px; height: 28px; border-radius: 50%;
+            background: var(--primary-color, #1a56db); color: #fff;
+            font-size: 13px; font-weight: 600; display: flex; align-items: center;
+            justify-content: center; flex-shrink: 0; margin-top: 1px;
+        }
+        .guide-step-text strong { display: block; font-size: 14px; color: #111; margin-bottom: 2px; }
+        .guide-step-text span { font-size: 13px; color: #6b7280; line-height: 1.5; }
+        .guide-tip {
+            margin-top: 20px; background: #f0f7ff; border-left: 3px solid var(--primary-color, #1a56db);
+            border-radius: 6px; padding: 12px 14px; font-size: 13px; color: #374151; line-height: 1.5;
+        }
+        .guide-tip strong { color: #111; }
+        .guide-modal-footer {
+            padding: 16px 24px; border-top: 1px solid #e9ecef;
+            display: flex; justify-content: flex-end; background: #f9fafb;
+        }
+        .guide-start-btn {
+            background: var(--primary-color, #1a56db); color: #fff; border: none;
+            border-radius: 8px; padding: 10px 22px; font-size: 14px; font-weight: 500;
+            cursor: pointer; font-family: 'Roboto', Arial, sans-serif;
+            display: flex; align-items: center; gap: 8px; transition: opacity 0.15s;
+        }
+        .guide-start-btn:hover { opacity: 0.88; }
+
+
+        .disclaimer {
+            padding: 8px; color: var(--disclaimer-color, #A0ABB6);
+            font-size: 12px; text-align: center; font-style: italic;
+            background: #fff; border-bottom: 1px solid #f0f0f0; flex-shrink: 0;
+        }
+
+        .chat-messages {
+            flex: 1; overflow-y: auto; padding: 15px; background: #fff;
+        }
+        .chat-messages::-webkit-scrollbar { width: 6px; }
+        .chat-messages::-webkit-scrollbar-track { background: transparent; }
+        .chat-messages::-webkit-scrollbar-thumb { background-color: rgba(0,0,0,0.2); border-radius: 3px; }
+
+        .message-container { display: flex; margin-bottom: 15px; }
+        .user-message-container { justify-content: flex-end; }
+        .assistant-message-container { justify-content: flex-start; }
+
+        .message { max-width: 75%; padding: 12px 16px; font-size: 14px; word-wrap: break-word; line-height: 1.5; }
+        .user-message { background-color: var(--primary-color, #1a56db); color: #fff; border-radius: 18px 18px 0 18px; }
+        .assistant-message { background-color: #f0f0f0; color: #000; border-radius: 18px 18px 18px 0; }
+
+        .assistant-message p { margin-bottom: 10px; }
+        .assistant-message p:last-child { margin-bottom: 0; }
+        .assistant-message ul { list-style-type: disc; padding-left: 20px; margin: 10px 0; }
+        .assistant-message li { margin-bottom: 5px; }
+        .assistant-message a { color: #0000FF; text-decoration: underline; }
+
+        .edit-btn {
+            background-color: #017BFF; border: none; border-radius: 4px; padding: 6px 12px;
+            cursor: pointer; opacity: 0; transition: opacity 0.2s ease, background-color 0.2s ease;
+            font-size: 12px; color: #ffffff; z-index: 10;
+            display: inline-flex; align-items: center; gap: 4px;
+            flex-shrink: 0; white-space: nowrap; align-self: center; height: fit-content;
+            font-family: 'Roboto', Arial, sans-serif; margin-left: 10px;
+        }
+        .assistant-message-container:hover .edit-btn { opacity: 1; }
+        .edit-btn:hover { background-color: #0166d6; }
+        .edit-btn i { font-size: 11px; }
+
+        /* Edit modal */
+        .edit-modal-overlay {
+            display: none; position: fixed; inset: 0;
+            background: rgba(0,0,0,0.55); z-index: 1000;
+            align-items: center; justify-content: center; padding: 20px;
+        }
+        .edit-modal-overlay.open { display: flex; }
+        .edit-modal {
+            background: #fff; border-radius: 12px; width: 100%; max-width: 680px;
+            box-shadow: 0 12px 40px rgba(0,0,0,0.25); overflow: hidden;
+        }
+        .edit-modal-header {
+            padding: 20px 24px; border-bottom: 1px solid #e9ecef;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .edit-modal-header h3 { font-size: 17px; font-weight: 600; margin: 0; color: #111; }
+        .edit-modal-close {
+            background: none; border: none; cursor: pointer; color: #9ca3af;
+            font-size: 20px; line-height: 1; padding: 0; transition: color 0.15s;
+        }
+        .edit-modal-close:hover { color: #374151; }
+        .edit-modal-body { padding: 24px; }
+        .edit-modal-body label {
+            display: block; font-size: 13.5px; font-weight: 500;
+            margin-bottom: 7px; color: #374151;
+        }
+        .edit-modal-body input, .edit-modal-body textarea {
+            width: 100%; padding: 10px 14px; border: 1px solid #d1d5db; border-radius: 8px;
+            font-size: 14px; font-family: 'Roboto', Arial, sans-serif;
+            outline: none; resize: vertical; color: #111; line-height: 1.5;
+            transition: border-color 0.15s;
+        }
+        .edit-modal-body input:focus, .edit-modal-body textarea:focus {
+            border-color: #017BFF; box-shadow: 0 0 0 3px rgba(1,123,255,0.12);
+        }
+        .edit-modal-footer {
+            padding: 16px 24px; border-top: 1px solid #e9ecef;
+            display: flex; justify-content: flex-end; gap: 10px; background: #f9fafb;
+        }
+        .edit-modal-cancel {
+            background: #fff; border: 1px solid #d1d5db; border-radius: 8px;
+            padding: 9px 20px; cursor: pointer; font-size: 14px; color: #374151;
+            font-family: 'Roboto', Arial, sans-serif; transition: background 0.15s;
+        }
+        .edit-modal-cancel:hover { background: #f3f4f6; }
+        .edit-modal-save {
+            background: #017BFF; border: none; border-radius: 8px;
+            padding: 9px 20px; cursor: pointer; font-size: 14px; color: #fff;
+            font-family: 'Roboto', Arial, sans-serif; display: flex; align-items: center; gap: 7px;
+            transition: background 0.15s;
+        }
+        .edit-modal-save:hover { background: #0166d6; }
+        .edit-modal-save:disabled { opacity: 0.6; cursor: not-allowed; }
+        .edit-modal-notice { font-size: 12px; color: #6b7280; margin-top: 8px; }
+
+        /* Toast */
+        .toast-container {
+            position: fixed; top: 20px; right: 20px; z-index: 2000;
+            display: flex; flex-direction: column; gap: 10px; pointer-events: none;
+        }
+        .toast {
+            background: #fff; border-radius: 10px; padding: 14px 18px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15); display: flex; align-items: center; gap: 12px;
+            font-size: 14px; font-family: 'Roboto', Arial, sans-serif; color: #111;
+            min-width: 240px; max-width: 340px; pointer-events: auto;
+            animation: toast-in 0.25s ease;
+        }
+        .toast-icon { font-size: 16px; flex-shrink: 0; }
+        .toast-success { border-left: 4px solid #22c55e; }
+        .toast-error   { border-left: 4px solid #ef4444; }
+        @keyframes toast-in {
+            from { opacity: 0; transform: translateX(30px); }
+            to   { opacity: 1; transform: translateX(0); }
+        }
+        @keyframes toast-out {
+            from { opacity: 1; transform: translateX(0); }
+            to   { opacity: 0; transform: translateX(30px); }
+        }
+
+        .tool-status {
+            display: flex; align-items: center; gap: 10px;
+            color: #888; font-size: 0.95em; padding: 10px 15px; width: fit-content;
+        }
+        .tool-status-dots { display: flex; flex-shrink: 0; }
+        .tool-status-dots span {
+            display: inline-block; width: 7px; height: 7px; background-color: #888;
+            border-radius: 50%; margin: 0 3px; animation: bounce 1s infinite ease-in-out;
+        }
+        .tool-status-dots span:nth-child(2) { animation-delay: 0.2s; }
+        .tool-status-dots span:nth-child(3) { animation-delay: 0.4s; }
+        .assistant-message:has(.tool-status) { padding: 0; width: fit-content; }
+
+        .typing-indicator { display: inline-block; padding: 10px 15px; min-width: 50px; }
+        .typing-indicator span {
+            display: inline-block; width: 7px; height: 7px; background-color: #888;
+            border-radius: 50%; margin: 0 3px; animation: bounce 1s infinite ease-in-out;
+        }
+        .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+        .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes bounce {
+            0%, 80%, 100% { transform: translateY(0); }
+            40%            { transform: translateY(-10px); }
+        }
+
+        .quick-questions-section { padding: 16px 15px 14px; flex-shrink: 0; }
+        .quick-questions { display: flex; flex-wrap: wrap; gap: 0; }
+        .quick-question-btn {
+            background: #f8f9fa; color: #495057; border: 1px solid #e9ecef;
+            border-radius: 18px; padding: 8px 14px; margin: 4px;
+            font-size: 13px; cursor: pointer; transition: all 0.15s ease;
+            font-family: 'Roboto', Arial, sans-serif;
+        }
+        .quick-question-btn:hover {
+            background: #fff; border-color: #dee2e6;
+            transform: translateY(-1px); box-shadow: 0 2px 5px rgba(0,0,0,0.08);
+        }
+
+        .input-section {
+            padding: 15px; background: #fff; border-top: 1px solid #f0f0f0; flex-shrink: 0;
+        }
+        .input-row {
+            display: flex; align-items: center; position: relative;
+            background: #FAFAFA; border-radius: 8px; padding: 8px;
+        }
+        .input-row input {
+            flex: 1; border: none; padding: 8px 40px 8px 4px;
+            font-size: 14px; outline: none; background: transparent;
+            font-family: 'Roboto', Arial, sans-serif; color: #000;
+        }
+        .send-btn {
+            position: absolute; right: 12px; width: 22px; height: 22px;
+            background: none; border: none; cursor: pointer; padding: 0;
+            display: flex; align-items: center; justify-content: center;
+            color: #A0ABB6; transition: color 0.2s;
+        }
+        .send-btn:hover { color: #555; }
+        .send-btn.disabled { opacity: 0.4; cursor: not-allowed; }
+    </style>
+</head>
+<body>
+    <div id="chat-wrapper">
+        <div class="chat-header">
+            <img src="" class="header-logo" alt="Logo" id="header-logo" style="display:none;">
+            <div class="header-status">
+                <div class="header-name" id="chatbot-name">JKF AI-assistent</div>
+                <div class="header-status-active">
+                    <div class="status-dot"></div>
+                    <span>Aktiv nu</span>
+                </div>
+            </div>
+            <div class="header-controls">
+                <button id="guide-btn" class="guide-btn" title="Vejledning">
+                    <i class="fas fa-question-circle"></i>
+                </button>
+                <button id="restart-btn" class="restart-btn" title="Genstart samtale">
+                    <i class="fas fa-redo-alt"></i>
+                </button>
+            </div>
+        </div>
+
+
+        <div class="disclaimer" id="disclaimer">Dette er vejledende svar</div>
+
+        <div class="chat-messages" id="chat-messages">
+            <div class="message-container assistant-message-container">
+                <div class="message assistant-message" id="welcome-message">
+                    Hej! Hvordan kan jeg hjælpe dig i dag?
+                </div>
+            </div>
+        </div>
+
+        <div class="quick-questions-section" id="quick-questions-section" style="display:none;">
+            <div class="quick-questions" id="quick-questions"></div>
+        </div>
+
+        <div class="input-section">
+            <div class="input-row">
+                <input type="text" id="user-input" placeholder="Stil et spørgsmål her...">
+                <button class="send-btn" id="send-btn" title="Send">
+                    <i class="fas fa-paper-plane"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast-container" id="toast-container"></div>
+
+    <!-- Guide modal -->
+    <div class="guide-modal-overlay" id="guide-modal-overlay">
+        <div class="guide-modal">
+            <div class="guide-modal-header">
+                <div class="guide-modal-header-icon"><i class="fas fa-graduation-cap"></i></div>
+                <div>
+                    <h2>Velkommen til chatbot-træning</h2>
+                    <p>Sådan hjælper du med at forbedre JKF's AI-assistent</p>
+                </div>
+            </div>
+            <div class="guide-modal-body">
+                <ol class="guide-steps">
+                    <li class="guide-step">
+                        <div class="guide-step-num">1</div>
+                        <div class="guide-step-text">
+                            <strong>Stil spørgsmål som en kunde ville</strong>
+                            <span>Tænk på, hvad en rigtig kunde ville spørge om — f.eks. leveringstider, produkter, ordrestatus eller priser.</span>
+                        </div>
+                    </li>
+                    <li class="guide-step">
+                        <div class="guide-step-num">2</div>
+                        <div class="guide-step-text">
+                            <strong>Vurder chatbottens svar</strong>
+                            <span>Er svaret korrekt, præcist og nyttigt? Mangler der information, eller er noget misvisende?</span>
+                        </div>
+                    </li>
+                    <li class="guide-step">
+                        <div class="guide-step-num">3</div>
+                        <div class="guide-step-text">
+                            <strong>Ret svaret hvis nødvendigt</strong>
+                            <span>Hold musen over chatbottens svar — der dukker en blå <b>Ret</b>-knap op. Klik på den for at skrive det korrekte svar og gem det i vidensbasen.</span>
+                        </div>
+                    </li>
+                    <li class="guide-step">
+                        <div class="guide-step-num">4</div>
+                        <div class="guide-step-text">
+                            <strong>Fortsæt med flere spørgsmål</strong>
+                            <span>Jo flere emner du tester, jo bedre bliver chatbotten. Brug genstartknappen øverst til højre for at starte en ny samtale.</span>
+                        </div>
+                    </li>
+                </ol>
+                <div class="guide-tip">
+                    <strong>Tip:</strong> Fokusér på de emner du kender bedst fra dit arbejde — du ved bedre end nogen anden, hvad der er det rigtige svar for JKFs kunder.
+                </div>
+            </div>
+            <div class="guide-modal-footer">
+                <button class="guide-start-btn" id="guide-start-btn">
+                    <i class="fas fa-play"></i>Start træning
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit modal -->
+    <div class="edit-modal-overlay" id="edit-modal-overlay">
+        <div class="edit-modal">
+            <div class="edit-modal-header">
+                <h3>Ret chatbot-svar</h3>
+                <button class="edit-modal-close" id="edit-modal-close" title="Luk">&times;</button>
+            </div>
+            <div class="edit-modal-body">
+                <div style="margin-bottom:18px;">
+                    <label for="edit-question">Spørgsmål</label>
+                    <input type="text" id="edit-question">
+                </div>
+                <div>
+                    <label for="edit-answer">Svar</label>
+                    <textarea id="edit-answer" rows="10"></textarea>
+                    <p class="edit-modal-notice">Tip: Brug formatet [link tekst](url) for at tilføje links</p>
+                </div>
+            </div>
+            <div class="edit-modal-footer">
+                <button class="edit-modal-cancel" id="edit-modal-cancel">Annuller</button>
+                <button class="edit-modal-save" id="edit-modal-save">
+                    <i class="fas fa-save"></i>Gem i vidensbase
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const BASE_URL = window.location.origin;
+        const TRAINING_MODE = true;
+
+        let threadId = null;
+        let isAssistantResponding = false;
+        let clientConfig = null;
+        let quickQuestions = [];
+
+        async function initThread() {
+            const resp = await fetch(`${BASE_URL}/init_thread`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+            const data = await resp.json();
+            threadId = data.thread_id;
+        }
+
+        async function loadConfig() {
+            const resp = await fetch(`${BASE_URL}/chatbot_config`);
+            clientConfig = await resp.json();
+            if (clientConfig.logo_url) {
+                const logo = document.getElementById('header-logo');
+                logo.src = clientConfig.logo_url;
+                logo.style.display = '';
+            }
+            if (clientConfig.primary_color)
+                document.documentElement.style.setProperty('--primary-color', clientConfig.primary_color);
+            if (clientConfig.chatbot_name)
+                document.getElementById('chatbot-name').textContent = clientConfig.chatbot_name;
+            if (clientConfig.welcome_message)
+                document.getElementById('welcome-message').textContent = clientConfig.welcome_message;
+            if (clientConfig.disclaimer_text)
+                document.getElementById('disclaimer').textContent = clientConfig.disclaimer_text;
+            if (Array.isArray(clientConfig.quick_questions))
+                quickQuestions = clientConfig.quick_questions;
+        }
+
+        function renderQuickQuestions() {
+            const section = document.getElementById('quick-questions-section');
+            const container = document.getElementById('quick-questions');
+            container.innerHTML = '';
+            const msgs = document.getElementById('chat-messages').querySelectorAll('.message-container');
+            if (!quickQuestions.length || msgs.length > 1) { section.style.display = 'none'; return; }
+            section.style.display = 'block';
+            quickQuestions.forEach(q => {
+                const btn = document.createElement('button');
+                btn.className = 'quick-question-btn';
+                btn.textContent = q;
+                btn.onclick = () => { if (!isAssistantResponding) { document.getElementById('user-input').value = q; sendMessage(); } };
+                container.appendChild(btn);
+            });
+        }
+
+        function scrollToBottom() {
+            const el = document.getElementById('chat-messages');
+            el.scrollTop = el.scrollHeight;
+        }
+
+        function addMessage(role, content, questionText = null) {
+            const chatMessages = document.getElementById('chat-messages');
+            const container = document.createElement('div');
+            container.className = `message-container ${role}-message-container`;
+            const msgDiv = document.createElement('div');
+            msgDiv.className = `message ${role}-message`;
+            if (role === 'user') msgDiv.textContent = content;
+            else msgDiv.innerHTML = content || '';
+            container.appendChild(msgDiv);
+            if (role === 'assistant' && questionText !== null) {
+                const editBtn = document.createElement('button');
+                editBtn.className = 'edit-btn';
+                editBtn.innerHTML = '<i class="fas fa-edit"></i>Ret';
+                editBtn.onclick = (e) => { e.stopPropagation(); openEditModal(questionText, msgDiv.innerHTML); };
+                container.appendChild(editBtn);
+            }
+            chatMessages.appendChild(container);
+            scrollToBottom();
+            return msgDiv;
+        }
+
+        function addTypingIndicator() {
+            const chatMessages = document.getElementById('chat-messages');
+            const container = document.createElement('div');
+            container.className = 'message-container assistant-message-container';
+            container.id = 'typing-container';
+            const indicator = document.createElement('div');
+            indicator.className = 'message assistant-message typing-indicator';
+            indicator.innerHTML = '<span></span><span></span><span></span>';
+            container.appendChild(indicator);
+            chatMessages.appendChild(container);
+            scrollToBottom();
+            return container;
+        }
+
+        function removeTypingIndicator() {
+            const el = document.getElementById('typing-container');
+            if (el) el.remove();
+        }
+
+        function renderMarkdown(text) {
+            if (!text) return '';
+            return text
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                .replace(/\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+                .replace(/^### (.+)$/gm, '<strong>$1</strong>')
+                .replace(/^## (.+)$/gm, '<strong>$1</strong>')
+                .replace(/^- (.+)$/gm, '• $1')
+                .replace(/\n/g, '<br>');
+        }
+
+        async function sendMessage() {
+            if (isAssistantResponding || !threadId) return;
+            const input = document.getElementById('user-input');
+            const message = input.value.trim();
+            if (!message) return;
+
+            document.getElementById('quick-questions-section').style.display = 'none';
+            addMessage('user', message);
+            input.value = '';
+            isAssistantResponding = true;
+            document.getElementById('send-btn').classList.add('disabled');
+
+            const typingContainer = addTypingIndicator();
+            let assistantMsgDiv = null;
+
+            try {
+                const response = await fetch(`${BASE_URL}/chat_stream`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message, thread_id: threadId, training_mode: TRAINING_MODE }),
+                });
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+
+                function readStream() {
+                    reader.read().then(({ done, value }) => {
+                        if (done) {
+                            removeTypingIndicator();
+                            if (!assistantMsgDiv) addMessage('assistant', 'Beklager, der opstod en fejl.', message);
+                            isAssistantResponding = false;
+                            document.getElementById('send-btn').classList.remove('disabled');
+                            return;
+                        }
+                        const lines = decoder.decode(value, { stream: true }).split('\n');
+                        for (const line of lines) {
+                            if (!line.startsWith('data: ')) continue;
+                            try {
+                                const data = JSON.parse(line.substring(6));
+                                if (data.type === 'thread_id') {
+                                    threadId = data.content || threadId;
+                                } else if (data.type === 'tool_call') {
+                                    if (!assistantMsgDiv) {
+                                        removeTypingIndicator();
+                                        assistantMsgDiv = addMessage('assistant', '', message);
+                                    }
+                                    assistantMsgDiv.innerHTML =
+                                        `<div class="tool-status">` +
+                                        `<div class="tool-status-dots"><span></span><span></span><span></span></div>` +
+                                        `<span>${data.label || 'Arbejder…'}</span>` +
+                                        `</div>`;
+                                    scrollToBottom();
+                                } else if (data.type === 'content') {
+                                    if (!assistantMsgDiv) {
+                                        removeTypingIndicator();
+                                        assistantMsgDiv = addMessage('assistant', '', message);
+                                    }
+                                    assistantMsgDiv.innerHTML = data.content;
+                                    scrollToBottom();
+                                } else if (data.type === 'done' || data.type === 'error') {
+                                    removeTypingIndicator();
+                                    isAssistantResponding = false;
+                                    document.getElementById('send-btn').classList.remove('disabled');
+                                    if (data.type === 'error' && assistantMsgDiv)
+                                        assistantMsgDiv.innerHTML = 'Der opstod en fejl. Prøv venligst igen.';
+                                    return;
+                                }
+                            } catch (e) { /* ignore parse errors */ }
+                        }
+                        readStream();
+                    }).catch(() => {
+                        removeTypingIndicator();
+                        isAssistantResponding = false;
+                        document.getElementById('send-btn').classList.remove('disabled');
+                    });
+                }
+                readStream();
+            } catch (e) {
+                removeTypingIndicator();
+                addMessage('assistant', 'Der opstod en fejl. Prøv venligst igen.', message);
+                isAssistantResponding = false;
+                document.getElementById('send-btn').classList.remove('disabled');
+            }
+        }
+
+        async function resetChat() {
+            const oldId = threadId;
+            threadId = null;
+            if (oldId) {
+                fetch(`${BASE_URL}/clear_thread`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ thread_id: oldId }),
+                });
+            }
+            await initThread();
+            const welcomeMsg = clientConfig?.welcome_message || 'Hej! Hvordan kan jeg hjælpe dig i dag?';
+            document.getElementById('chat-messages').innerHTML = `
+                <div class="message-container assistant-message-container">
+                    <div class="message assistant-message" id="welcome-message">${welcomeMsg}</div>
+                </div>`;
+            renderQuickQuestions();
+        }
+
+        // ── Toast ───────────────────────────────────────────────────────────────
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = `toast toast-${type}`;
+            const icon = type === 'success' ? '✓' : '✕';
+            toast.innerHTML = `<span class="toast-icon">${icon}</span><span>${message}</span>`;
+            container.appendChild(toast);
+            setTimeout(() => {
+                toast.style.animation = 'toast-out 0.25s ease forwards';
+                setTimeout(() => toast.remove(), 250);
+            }, 3500);
+        }
+
+        // ── Edit modal ──────────────────────────────────────────────────────────
+        function htmlToPlainText(html) {
+            let t = html
+                .replace(/<\/p>/gi, '\n\n').replace(/<p[^>]*>/gi, '')
+                .replace(/<\/div>/gi, '\n').replace(/<div[^>]*>/gi, '')
+                .replace(/<br\s*\/?>/gi, '\n')
+                .replace(/<\/li>/gi, '\n').replace(/<li[^>]*>/gi, '')
+                .replace(/<\/?[uo]l[^>]*>/gi, '\n')
+                .replace(/<a\s+(?:[^>]*?\s+)?href=(["'])(.*?)\1[^>]*>(.*?)<\/a>/gi, '[$3]($2)')
+                .replace(/<[^>]+>/g, '');
+            const tmp = document.createElement('div');
+            tmp.innerHTML = t;
+            return (tmp.textContent || tmp.innerText || t).replace(/\n{3,}/g, '\n\n').trim();
+        }
+
+        function openEditModal(question, answerHtml) {
+            document.getElementById('edit-question').value = question || '';
+            document.getElementById('edit-answer').value = htmlToPlainText(answerHtml);
+            document.getElementById('edit-modal-overlay').classList.add('open');
+            document.getElementById('edit-question').focus();
+        }
+
+        function closeEditModal() {
+            document.getElementById('edit-modal-overlay').classList.remove('open');
+        }
+
+        async function saveEditedAnswer() {
+            const question = document.getElementById('edit-question').value.trim();
+            const answer   = document.getElementById('edit-answer').value.trim();
+            if (!question || !answer) return;
+
+            const saveBtn = document.getElementById('edit-modal-save');
+            saveBtn.disabled = true;
+            saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>Gemmer…';
+
+            try {
+                const resp = await fetch(`${BASE_URL}/api/kb/suggest`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ question, answer }),
+                });
+                const result = await resp.json();
+                if (result.success) {
+                    closeEditModal();
+                    showToast('Rettelsen er gemt i vidensbasen');
+                } else {
+                    showToast('Fejl: ' + (result.message || 'Kunne ikke gemme'), 'error');
+                }
+            } catch (e) {
+                showToast('Der opstod en fejl ved gemning.', 'error');
+            } finally {
+                saveBtn.disabled = false;
+                saveBtn.innerHTML = '<i class="fas fa-save"></i>Gem i vidensbase';
+            }
+        }
+
+        document.getElementById('edit-modal-close').addEventListener('click', closeEditModal);
+        document.getElementById('edit-modal-cancel').addEventListener('click', closeEditModal);
+        document.getElementById('edit-modal-save').addEventListener('click', saveEditedAnswer);
+        document.getElementById('edit-modal-overlay').addEventListener('click', e => {
+            if (e.target === e.currentTarget) closeEditModal();
+        });
+
+        // ── Guide modal ──────────────────────────────────────────────────────────
+        function closeGuideModal() {
+            document.getElementById('guide-modal-overlay').classList.remove('open');
+            localStorage.setItem('jkf_guide_seen', '1');
+        }
+        document.getElementById('guide-start-btn').addEventListener('click', closeGuideModal);
+        document.getElementById('guide-btn').addEventListener('click', () => {
+            document.getElementById('guide-modal-overlay').classList.add('open');
+        });
+        if (!localStorage.getItem('jkf_guide_seen')) {
+            document.getElementById('guide-modal-overlay').classList.add('open');
+        }
+
+        document.getElementById('user-input').addEventListener('keypress', e => {
+            if (e.key === 'Enter' && !isAssistantResponding) sendMessage();
+        });
+        document.getElementById('send-btn').addEventListener('click', () => {
+            if (!isAssistantResponding) sendMessage();
+        });
+        document.getElementById('restart-btn').addEventListener('click', resetChat);
+
+        (async () => {
+            await loadConfig();
+            await initThread();
+            renderQuickQuestions();
+        })();
+    </script>
+</body>
+</html>

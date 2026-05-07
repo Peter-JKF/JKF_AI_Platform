@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="login-page">
+    <!-- Floating Dark Mode Toggle for Login Page -->
+    <button class="header-btn" id="darkModeToggle" title="Skift tema" style="position: fixed; top: 1.5rem; right: 1.5rem; z-index: 1000; background: var(--bg-card); border: 1px solid var(--border-color); box-shadow: var(--shadow-md);">
+        <i class="fas fa-moon" id="darkModeIcon"></i>
+    </button>
+    
+    <div class="login-container">
+        <div class="login-card">
+            <div class="login-logo">
+                <h1>JKF Platform</h1>
+            </div>
+            
+            <form method="POST" class="login-form">
+                {{ form.hidden_tag() }}
+                <div class="form-group">
+                    <label for="username" class="form-label">Brugernavn</label>
+                    {{ form.username(class="form-control", placeholder="Indtast brugernavn", id="username") }}
+                </div>
+                <div class="form-group">
+                    <label for="password" class="form-label">Adgangskode</label>
+                    {{ form.password(class="form-control", placeholder="Indtast adgangskode", id="password") }}
+                </div>
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-sign-in-alt me-2"></i>Log ind
+                </button>
+            </form>
+            
+            <p class="text-center text-muted mt-4 mb-0" style="font-size: 0.8125rem;">
+                JKF Chatbot &amp; Dashboard Platform
+            </p>
+        </div>
+    </div>
+</div>
+{% endblock %}

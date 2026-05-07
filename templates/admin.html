@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% block title %}Brugere – JKF{% endblock %}
+{% block page_title %}Brugeradministration{% endblock %}
+
+{% block main_content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2 class="mb-0">Brugere</h2>
+    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addUserModal">
+        <i class="fas fa-plus me-1"></i>Opret bruger
+    </button>
+</div>
+
+<div class="card">
+    <div class="card-body p-0">
+        <table class="table table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>Brugernavn</th>
+                    <th>Rolle</th>
+                    <th>Salgs-assistent</th>
+                    <th>Oprettet</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for u in users %}
+                <tr>
+                    <td>
+                        <i class="fas fa-user-circle me-2 text-muted"></i>{{ u.username }}
+                        {% if u.id == session.get('user_id') %}
+                        <span class="badge bg-primary ms-1">Dig</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if u.is_admin %}
+                        <span class="badge bg-danger">Administrator</span>
+                        {% elif u.sales_only %}
+                        <span class="badge bg-warning text-dark">Kun salgs-assistent</span>
+                        {% elif u.can_access_sales_chatbot %}
+                        <span class="badge bg-info">Salgs-bruger</span>
+                        {% else %}
+                        <span class="badge bg-secondary">Bruger</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if u.is_admin %}
+                        <span class="badge bg-success" title="Administratorer har altid adgang">Altid</span>
+                        {% else %}
+                        <form method="POST" action="{{ url_for('admin_toggle_sales_chatbot', user_id=u.id) }}" class="d-inline">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            {% if u.sales_only %}
+                            <button type="submit" class="btn btn-sm btn-warning text-dark" title="Klik for at fjerne adgang">
+                                <i class="fas fa-lock"></i> Kun salgs-assistent
+                            </button>
+                            {% elif u.can_access_sales_chatbot %}
+                            <button type="submit" class="btn btn-sm btn-success" title="Klik for kun salgs-assistent">
+                                <i class="fas fa-toggle-on"></i> Fuld adgang
+                            </button>
+                            {% else %}
+                            <button type="submit" class="btn btn-sm btn-outline-secondary" title="Klik for at aktivere">
+                                <i class="fas fa-toggle-off"></i> Ingen
+                            </button>
+                            {% endif %}
+                        </form>
+                        {% endif %}
+                    </td>
+                    <td class="text-muted">{{ u.created_at|danish_date }}</td>
+                    <td>
+                        <div class="d-flex gap-1 justify-content-end">
+                            <button class="btn btn-sm btn-outline-secondary"
+                                    data-bs-toggle="modal"
+                                    data-bs-target="#resetPwModal{{ u.id }}">
+                                <i class="fas fa-key"></i> Nulstil adgangskode
+                            </button>
+                            {% if u.id != session.get('user_id') %}
+                            <form method="POST" action="{{ url_for('admin_delete_user', user_id=u.id) }}"
+                                  onsubmit="return confirm('Slet bruger {{ u.username }}?')">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="btn btn-sm btn-outline-danger">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </form>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Add User Modal -->
+<div class="modal fade" id="addUserModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="POST" action="{{ url_for('admin_add_user') }}">
+                {{ form.hidden_tag() }}
+                <div class="modal-header">
+                    <h5 class="modal-title">Opret bruger</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Brugernavn</label>
+                        {{ form.username(class='form-control') }}
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Adgangskode</label>
+                        {{ form.password(class='form-control') }}
+                    </div>
+                    <div class="mb-2">
+                        <div class="form-check">
+                            {{ form.is_admin(class='form-check-input') }}
+                            <label class="form-check-label">Administrator</label>
+                        </div>
+                    </div>
+                    <div class="mb-1">
+                        <div class="form-check">
+                            {{ form.can_access_sales_chatbot(class='form-check-input', id='can_access_sales_chatbot') }}
+                            <label class="form-check-label" for="can_access_sales_chatbot">Salgs-assistent adgang <small class="text-muted">(fuld platform + salg)</small></label>
+                        </div>
+                    </div>
+                    <div class="form-check ms-3">
+                        {{ form.sales_only(class='form-check-input', id='sales_only') }}
+                        <label class="form-check-label" for="sales_only">Kun salgs-assistent <small class="text-muted">(ingen anden adgang)</small></label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuller</button>
+                    <button type="submit" class="btn btn-primary">Opret bruger</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Reset Password Modals -->
+{% for u in users %}
+<div class="modal fade" id="resetPwModal{{ u.id }}" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="POST" action="{{ url_for('admin_reset_password', user_id=u.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="modal-header">
+                    <h5 class="modal-title">Nulstil adgangskode for {{ u.username }}</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Ny adgangskode</label>
+                        <input type="password" name="new_password" class="form-control" required>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuller</button>
+                    <button type="submit" class="btn btn-primary">Gem ny adgangskode</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endfor %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    var salesOnly = document.getElementById('sales_only');
+    var salesAccess = document.getElementById('can_access_sales_chatbot');
+    if (salesOnly && salesAccess) {
+        salesOnly.addEventListener('change', function () {
+            if (this.checked) {
+                salesAccess.checked = true;
+                salesAccess.disabled = true;
+            } else {
+                salesAccess.disabled = false;
+            }
+        });
+    }
+});
+</script>
+{% endblock %}
+{% endblock %}
