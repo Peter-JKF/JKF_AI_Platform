@@ -107,6 +107,16 @@
                 </div>
                 {% endif %}
 
+                {% if user and (user.can_access_budget_agent or user.is_admin) %}
+                <div class="nav-section">
+                    <div class="nav-section-title">Økonomi</div>
+                    <a href="{{ url_for('budget_agent') }}" class="nav-item{{ ' active' if request.endpoint == 'budget_agent' else '' }}" data-tooltip="Budget-assistent">
+                        <i class="fas fa-balance-scale"></i>
+                        <span class="nav-text">Budget-assistent</span>
+                    </a>
+                </div>
+                {% endif %}
+
                 {% if user and user.is_admin %}
                 <div class="nav-section">
                     <div class="nav-section-title">Administration</div>

@@ -2,6 +2,140 @@
 {% block title %}Brugere – JKF{% endblock %}
 {% block page_title %}Brugeradministration{% endblock %}
 
+{% block extra_css %}
+<style>
+/* ── Role badge ── */
+.role-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.25rem 0.65rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    letter-spacing: .01em;
+}
+.role-pill.admin    { background: #18181b; color: #fff; }
+.role-pill.sales    { background: #e0f2fe; color: #0369a1; }
+.role-pill.salesonly  { background: #fef3c7; color: #92400e; }
+.role-pill.budgetonly { background: #ede9fe; color: #5b21b6; }
+.role-pill.user       { background: #f1f5f9; color: #64748b; }
+[data-theme="dark"] .role-pill.sales      { background: #0c4a6e; color: #7dd3fc; }
+[data-theme="dark"] .role-pill.salesonly  { background: #451a03; color: #fcd34d; }
+[data-theme="dark"] .role-pill.budgetonly { background: #2e1065; color: #c4b5fd; }
+[data-theme="dark"] .role-pill.user       { background: #1e293b; color: #94a3b8; }
+
+/* ── Access pill buttons ── */
+.access-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.25rem 0.7rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    border: 1.5px solid transparent;
+    cursor: pointer;
+    transition: opacity 0.15s, filter 0.15s;
+    white-space: nowrap;
+    background: none;
+}
+.access-pill:hover { filter: brightness(0.93); }
+.access-pill.on-sales  { background: #dcfce7; color: #15803d; border-color: #bbf7d0; }
+.access-pill.on-budget { background: #ede9fe; color: #5b21b6; border-color: #ddd6fe; }
+.access-pill.on-admin  { background: #f1f5f9; color: #475569; border-color: #e2e8f0; cursor: default; }
+.access-pill.off       { background: #f8fafc; color: #94a3b8; border-color: #e2e8f0; }
+.access-pill.lock      { background: #fff7ed; color: #c2410c; border-color: #fed7aa; }
+[data-theme="dark"] .access-pill.on-sales  { background: #052e16; color: #4ade80; border-color: #14532d; }
+[data-theme="dark"] .access-pill.on-budget { background: #2e1065; color: #c4b5fd; border-color: #4c1d95; }
+[data-theme="dark"] .access-pill.on-admin  { background: #1e293b; color: #94a3b8; border-color: #334155; }
+[data-theme="dark"] .access-pill.off       { background: #0f172a; color: #475569; border-color: #1e293b; }
+
+/* ── Permission cards in modal ── */
+.perm-section { margin-top: 1.25rem; }
+.perm-section-title {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--text-muted, #94a3b8);
+    margin-bottom: 0.5rem;
+}
+.perm-card {
+    border: 1.5px solid var(--border, #e2e8f0);
+    border-radius: 10px;
+    padding: 0.75rem 1rem;
+    margin-bottom: 0.5rem;
+    transition: border-color 0.15s, background 0.15s;
+}
+#adminCard:has(input:checked) {
+    border-color: #0ea5e9;
+    background: #f0f9ff;
+}
+[data-theme="dark"] #adminCard:has(input:checked) {
+    border-color: #0ea5e9;
+    background: #0c2d3f;
+}
+.perm-card label {
+    cursor: pointer;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin: 0;
+}
+.perm-card .perm-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+    flex-shrink: 0;
+}
+.perm-card .perm-icon.admin  { background: #18181b; color: #fff; }
+.perm-card .perm-icon.sales  { background: #0ea5e9; color: #fff; }
+.perm-card .perm-icon.budget { background: #6366f1; color: #fff; }
+.perm-card .perm-text { flex: 1; }
+.perm-card .perm-name { font-size: 0.88rem; font-weight: 500; color: var(--text-primary); }
+.perm-card .perm-desc { font-size: 0.75rem; color: var(--text-muted, #94a3b8); margin-top: 1px; }
+.perm-card input[type=checkbox] { width: 1rem; height: 1rem; flex-shrink: 0; cursor: pointer; }
+
+/* Sales level selector */
+.sales-level {
+    display: flex;
+    gap: 0.4rem;
+    margin-top: 0.5rem;
+    flex-wrap: wrap;
+}
+.sales-level-btn {
+    flex: 1;
+    min-width: 90px;
+    padding: 0.4rem 0.5rem;
+    border-radius: 8px;
+    border: 1.5px solid var(--border, #e2e8f0);
+    background: none;
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: var(--text-muted, #64748b);
+    cursor: pointer;
+    text-align: center;
+    transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+.sales-level-btn.selected {
+    border-color: #0ea5e9;
+    background: #e0f2fe;
+    color: #0369a1;
+}
+[data-theme="dark"] .sales-level-btn.selected {
+    border-color: #0ea5e9;
+    background: #0c4a6e;
+    color: #7dd3fc;
+}
+</style>
+{% endblock %}
+
 {% block main_content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h2 class="mb-0">Brugere</h2>
@@ -18,6 +152,7 @@
                     <th>Brugernavn</th>
                     <th>Rolle</th>
                     <th>Salgs-assistent</th>
+                    <th>Budget-assistent</th>
                     <th>Oprettet</th>
                     <th></th>
                 </tr>
@@ -28,43 +163,67 @@
                     <td>
                         <i class="fas fa-user-circle me-2 text-muted"></i>{{ u.username }}
                         {% if u.id == session.get('user_id') %}
-                        <span class="badge bg-primary ms-1">Dig</span>
+                        <span class="badge bg-primary ms-1" style="font-size:.7rem;">Dig</span>
                         {% endif %}
                     </td>
                     <td>
                         {% if u.is_admin %}
-                        <span class="badge bg-danger">Administrator</span>
+                        <span class="role-pill admin"><i class="fas fa-shield-alt" style="font-size:.65rem;"></i>Administrator</span>
                         {% elif u.sales_only %}
-                        <span class="badge bg-warning text-dark">Kun salgs-assistent</span>
-                        {% elif u.can_access_sales_chatbot %}
-                        <span class="badge bg-info">Salgs-bruger</span>
+                        <span class="role-pill salesonly">Kun salg</span>
+                        {% elif u.budget_only %}
+                        <span class="role-pill budgetonly">Kun økonomi</span>
+                        {% elif u.can_access_sales_chatbot or u.can_access_budget_agent %}
+                        <span class="role-pill sales">Platformbruger</span>
                         {% else %}
-                        <span class="badge bg-secondary">Bruger</span>
+                        <span class="role-pill user">Bruger</span>
                         {% endif %}
                     </td>
                     <td>
                         {% if u.is_admin %}
-                        <span class="badge bg-success" title="Administratorer har altid adgang">Altid</span>
+                        <span class="access-pill on-admin"><i class="fas fa-check" style="font-size:.65rem;"></i>Altid</span>
                         {% else %}
                         <form method="POST" action="{{ url_for('admin_toggle_sales_chatbot', user_id=u.id) }}" class="d-inline">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             {% if u.sales_only %}
-                            <button type="submit" class="btn btn-sm btn-warning text-dark" title="Klik for at fjerne adgang">
-                                <i class="fas fa-lock"></i> Kun salgs-assistent
+                            <button type="submit" class="access-pill lock" title="Klik for at fjerne adgang">
+                                <i class="fas fa-lock" style="font-size:.65rem;"></i>Kun salg
                             </button>
                             {% elif u.can_access_sales_chatbot %}
-                            <button type="submit" class="btn btn-sm btn-success" title="Klik for kun salgs-assistent">
-                                <i class="fas fa-toggle-on"></i> Fuld adgang
+                            <button type="submit" class="access-pill on-sales" title="Klik for at ændre">
+                                <i class="fas fa-check" style="font-size:.65rem;"></i>Adgang
                             </button>
                             {% else %}
-                            <button type="submit" class="btn btn-sm btn-outline-secondary" title="Klik for at aktivere">
-                                <i class="fas fa-toggle-off"></i> Ingen
+                            <button type="submit" class="access-pill off" title="Klik for at aktivere">
+                                —&nbsp;Ingen
                             </button>
                             {% endif %}
                         </form>
                         {% endif %}
                     </td>
-                    <td class="text-muted">{{ u.created_at|danish_date }}</td>
+                    <td>
+                        {% if u.is_admin %}
+                        <span class="access-pill on-admin"><i class="fas fa-check" style="font-size:.65rem;"></i>Altid</span>
+                        {% else %}
+                        <form method="POST" action="{{ url_for('admin_toggle_budget_agent', user_id=u.id) }}" class="d-inline">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            {% if u.budget_only %}
+                            <button type="submit" class="access-pill lock" title="Klik for at fjerne adgang">
+                                <i class="fas fa-lock" style="font-size:.65rem;"></i>Kun økonomi
+                            </button>
+                            {% elif u.can_access_budget_agent %}
+                            <button type="submit" class="access-pill on-budget" title="Klik for at ændre">
+                                <i class="fas fa-check" style="font-size:.65rem;"></i>Adgang
+                            </button>
+                            {% else %}
+                            <button type="submit" class="access-pill off" title="Klik for at aktivere">
+                                —&nbsp;Ingen
+                            </button>
+                            {% endif %}
+                        </form>
+                        {% endif %}
+                    </td>
+                    <td class="text-muted" style="font-size:.85rem;">{{ u.created_at|danish_date }}</td>
                     <td>
                         <div class="d-flex gap-1 justify-content-end">
                             <button class="btn btn-sm btn-outline-secondary"
@@ -90,43 +249,91 @@
     </div>
 </div>
 
-<!-- Add User Modal -->
+<!-- ── Add User Modal ── -->
 <div class="modal fade" id="addUserModal" tabindex="-1">
     <div class="modal-dialog">
         <div class="modal-content">
-            <form method="POST" action="{{ url_for('admin_add_user') }}">
+            <form method="POST" action="{{ url_for('admin_add_user') }}" id="addUserForm">
                 {{ form.hidden_tag() }}
-                <div class="modal-header">
+                <!-- Hidden fields driven by JS -->
+                {{ form.can_access_sales_chatbot(id='f_sales_access', style='display:none') }}
+                {{ form.sales_only(id='f_sales_only', style='display:none') }}
+
+                <div class="modal-header border-0 pb-0">
                     <h5 class="modal-title">Opret bruger</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
-                <div class="modal-body">
+                <div class="modal-body pt-2">
+
+                    <!-- Credentials -->
                     <div class="mb-3">
-                        <label class="form-label">Brugernavn</label>
+                        <label class="form-label fw-500">Brugernavn</label>
                         {{ form.username(class='form-control') }}
                     </div>
                     <div class="mb-3">
-                        <label class="form-label">Adgangskode</label>
+                        <label class="form-label fw-500">Adgangskode</label>
                         {{ form.password(class='form-control') }}
                     </div>
-                    <div class="mb-2">
-                        <div class="form-check">
-                            {{ form.is_admin(class='form-check-input') }}
-                            <label class="form-check-label">Administrator</label>
+
+                    <!-- Systemrettigheder -->
+                    <div class="perm-section">
+                        <div class="perm-section-title">Systemrettigheder</div>
+                        <div class="perm-card" id="adminCard">
+                            <label>
+                                {{ form.is_admin(class='form-check-input') }}
+                                <span class="perm-icon admin"><i class="fas fa-shield-alt"></i></span>
+                                <span class="perm-text">
+                                    <span class="perm-name">Administrator</span>
+                                    <span class="perm-desc">Fuld adgang til hele platformen inkl. alle agenter og brugeradministration</span>
+                                </span>
+                            </label>
                         </div>
                     </div>
-                    <div class="mb-1">
-                        <div class="form-check">
-                            {{ form.can_access_sales_chatbot(class='form-check-input', id='can_access_sales_chatbot') }}
-                            <label class="form-check-label" for="can_access_sales_chatbot">Salgs-assistent adgang <small class="text-muted">(fuld platform + salg)</small></label>
+
+                    <!-- Agentadgang -->
+                    <div class="perm-section">
+                        <div class="perm-section-title">Agentadgang</div>
+                        <div class="d-flex gap-2 mb-2">
+                            <button type="button" class="sales-level-btn" id="fullAccessBtn" style="flex:none;padding:.35rem .9rem;">
+                                <i class="fas fa-unlock me-1" style="font-size:.7rem;"></i>Fuld adgang til platformen
+                            </button>
+                        </div>
+
+                        <!-- Sales -->
+                        <div class="perm-card" id="salesCard">
+                            <div style="display:flex;align-items:center;gap:.6rem;">
+                                <span class="perm-icon sales"><i class="fas fa-chart-bar"></i></span>
+                                <span class="perm-text">
+                                    <span class="perm-name">Salgs-assistent</span>
+                                    <span class="perm-desc">Adgang til salgsdata og omsætningsanalyser</span>
+                                </span>
+                            </div>
+                            <div class="sales-level mt-2" id="salesLevelBtns">
+                                <button type="button" class="sales-level-btn selected" data-level="none">Ingen adgang</button>
+                                <button type="button" class="sales-level-btn" data-level="only">Kun salg</button>
+                            </div>
+                        </div>
+
+                        <!-- Budget -->
+                        <div class="perm-card" id="budgetCard">
+                            <div style="display:flex;align-items:center;gap:.6rem;">
+                                <span class="perm-icon budget"><i class="fas fa-balance-scale"></i></span>
+                                <span class="perm-text">
+                                    <span class="perm-name">Budget-assistent</span>
+                                    <span class="perm-desc">Adgang til budgetopfølgning inkl. løn- og gagedata</span>
+                                </span>
+                            </div>
+                            {{ form.can_access_budget_agent(id='f_budget_access', style='display:none') }}
+                            {{ form.budget_only(id='f_budget_only', style='display:none') }}
+                            <div class="sales-level mt-2" id="budgetLevelBtns">
+                                <button type="button" class="sales-level-btn selected" data-level="none">Ingen adgang</button>
+                                <button type="button" class="sales-level-btn" data-level="only">Kun økonomi</button>
+                            </div>
                         </div>
                     </div>
-                    <div class="form-check ms-3">
-                        {{ form.sales_only(class='form-check-input', id='sales_only') }}
-                        <label class="form-check-label" for="sales_only">Kun salgs-assistent <small class="text-muted">(ingen anden adgang)</small></label>
-                    </div>
+
                 </div>
-                <div class="modal-footer">
+                <div class="modal-footer border-0 pt-0">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuller</button>
                     <button type="submit" class="btn btn-primary">Opret bruger</button>
                 </div>
@@ -135,7 +342,7 @@
     </div>
 </div>
 
-<!-- Reset Password Modals -->
+<!-- ── Reset Password Modals ── -->
 {% for u in users %}
 <div class="modal fade" id="resetPwModal{{ u.id }}" tabindex="-1">
     <div class="modal-dialog">
@@ -165,18 +372,63 @@
 {% block extra_js %}
 <script>
 document.addEventListener('DOMContentLoaded', function () {
-    var salesOnly = document.getElementById('sales_only');
-    var salesAccess = document.getElementById('can_access_sales_chatbot');
-    if (salesOnly && salesAccess) {
-        salesOnly.addEventListener('change', function () {
-            if (this.checked) {
-                salesAccess.checked = true;
-                salesAccess.disabled = true;
-            } else {
-                salesAccess.disabled = false;
-            }
-        });
+    const salesAccess  = document.getElementById('f_sales_access');
+    const salesOnly    = document.getElementById('f_sales_only');
+    const budgetAccess = document.getElementById('f_budget_access');
+    const budgetOnly   = document.getElementById('f_budget_only');
+
+    const salesBtns  = document.querySelectorAll('#salesLevelBtns .sales-level-btn');
+    const budgetBtns = document.querySelectorAll('#budgetLevelBtns .sales-level-btn');
+    const fullBtn    = document.getElementById('fullAccessBtn');
+
+    // 'full' = no button selected on the agent card (full access via top button)
+    // 'none' = "Ingen adgang" selected
+    // 'only' = "Kun X" selected
+    let salesState  = 'none';
+    let budgetState = 'none';
+
+    function applySalesLevel(level) {
+        salesState = level;
+        salesBtns.forEach(b => b.classList.toggle('selected', b.dataset.level === level));
+        salesAccess.checked = (level === 'full' || level === 'only');
+        salesOnly.checked   = (level === 'only');
+        if (level !== 'full') fullBtn.classList.remove('selected');
     }
+
+    function applyBudgetLevel(level) {
+        budgetState = level;
+        budgetBtns.forEach(b => b.classList.toggle('selected', b.dataset.level === level));
+        budgetAccess.checked = (level === 'full' || level === 'only');
+        budgetOnly.checked   = (level === 'only');
+        if (level !== 'full') fullBtn.classList.remove('selected');
+    }
+
+    function checkFullActive() {
+        if (salesState === 'full' && budgetState === 'full') {
+            fullBtn.classList.add('selected');
+        }
+    }
+
+    salesBtns.forEach(btn => btn.addEventListener('click', () => {
+        applySalesLevel(btn.dataset.level);
+    }));
+    budgetBtns.forEach(btn => btn.addEventListener('click', () => {
+        applyBudgetLevel(btn.dataset.level);
+    }));
+
+    fullBtn.addEventListener('click', () => {
+        applySalesLevel('full');
+        applyBudgetLevel('full');
+        fullBtn.classList.add('selected');
+    });
+
+    document.getElementById('addUserModal').addEventListener('hidden.bs.modal', function () {
+        document.getElementById('addUserForm').reset();
+        salesState = 'none'; budgetState = 'none';
+        salesBtns.forEach(b  => b.classList.toggle('selected', b.dataset.level === 'none'));
+        budgetBtns.forEach(b => b.classList.toggle('selected', b.dataset.level === 'none'));
+        fullBtn.classList.remove('selected');
+    });
 });
 </script>
 {% endblock %}

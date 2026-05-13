@@ -136,6 +136,8 @@ class User(db.Model):
     is_admin = db.Column(db.Boolean, default=False)
     can_access_sales_chatbot = db.Column(db.Boolean, default=False)
     sales_only = db.Column(db.Boolean, default=False)
+    can_access_budget_agent = db.Column(db.Boolean, default=False)
+    budget_only = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     def set_password(self, password):
@@ -311,6 +313,33 @@ class SalesMessage(db.Model):
     created_at      = db.Column(db.DateTime, default=datetime.utcnow)
 
 
+class BudgetConversation(db.Model):
+    """Top-level record for a budget-agent conversation."""
+    __tablename__ = 'budget_conversations'
+    id         = db.Column(db.Integer, primary_key=True)
+    user_id    = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    title      = db.Column(db.String(255), nullable=False, default='Ny samtale')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user     = db.relationship('User', foreign_keys=[user_id])
+    messages = db.relationship('BudgetMessage', backref='conversation',
+                               cascade='all, delete-orphan', order_by='BudgetMessage.id')
+
+
+class BudgetMessage(db.Model):
+    """A single turn (user or assistant) within a BudgetConversation."""
+    __tablename__ = 'budget_messages'
+    id              = db.Column(db.Integer, primary_key=True)
+    conversation_id = db.Column(db.Integer, db.ForeignKey('budget_conversations.id'),
+                                nullable=False, index=True)
+    role            = db.Column(db.String(20), nullable=False)   # 'user' | 'assistant'
+    content         = db.Column(db.Text, nullable=False)
+    sql_query       = db.Column(db.Text)                          # only on assistant turns
+    row_count       = db.Column(db.Integer)
+    created_at      = db.Column(db.DateTime, default=datetime.utcnow)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Init DB
 # ─────────────────────────────────────────────────────────────────────────────
@@ -323,6 +352,10 @@ def init_db():
              "Migrated: added can_access_sales_chatbot column to users table"),
             ("ALTER TABLE users ADD COLUMN sales_only BOOLEAN DEFAULT 0 NOT NULL",
              "Migrated: added sales_only column to users table"),
+            ("ALTER TABLE users ADD COLUMN can_access_budget_agent BOOLEAN DEFAULT 0 NOT NULL",
+             "Migrated: added can_access_budget_agent column to users table"),
+            ("ALTER TABLE users ADD COLUMN budget_only BOOLEAN DEFAULT 0 NOT NULL",
+             "Migrated: added budget_only column to users table"),
         ]:
             with db.engine.connect() as conn:
                 try:
@@ -467,8 +500,11 @@ def login_required(f):
         if 'user_id' not in session:
             return redirect(url_for('login', next=request.url))
         user = User.query.get(session['user_id'])
-        if user and user.sales_only and not user.is_admin:
-            return redirect(url_for('sales_chatbot'))
+        if user and not user.is_admin:
+            if user.budget_only:
+                return redirect(url_for('budget_agent'))
+            if user.sales_only:
+                return redirect(url_for('sales_chatbot'))
         return f(*args, **kwargs)
     return decorated
 
@@ -496,6 +532,20 @@ def sales_chatbot_required(f):
         user = User.query.get(session['user_id'])
         if not user or (not user.can_access_sales_chatbot and not user.is_admin):
             flash('Du har ikke adgang til salgs-assistenten.', 'danger')
+            return redirect(url_for('dashboard'))
+        return f(*args, **kwargs)
+    return decorated
+
+
+def budget_agent_required(f):
+    from functools import wraps
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if 'user_id' not in session:
+            return redirect(url_for('login'))
+        user = User.query.get(session['user_id'])
+        if not user or (not user.can_access_budget_agent and not user.is_admin):
+            flash('Du har ikke adgang til budget-assistenten.', 'danger')
             return redirect(url_for('dashboard'))
         return f(*args, **kwargs)
     return decorated
@@ -555,6 +605,8 @@ class UserForm(FlaskForm):
     is_admin = BooleanField('Administrator')
     can_access_sales_chatbot = BooleanField('Salgs-assistent adgang')
     sales_only = BooleanField('Kun salgs-assistent')
+    can_access_budget_agent = BooleanField('Budget-assistent adgang')
+    budget_only = BooleanField('Kun budget-assistent')
     submit = SubmitField('Gem bruger')
 
 
@@ -2729,8 +2781,11 @@ def login():
             session['user_id'] = user.id
             flash(f'Velkommen, {user.username}!', 'success')
             next_url = request.args.get('next')
-            if user.sales_only and not user.is_admin:
-                return redirect(url_for('sales_chatbot'))
+            if not user.is_admin:
+                if user.budget_only:
+                    return redirect(url_for('budget_agent'))
+                if user.sales_only:
+                    return redirect(url_for('sales_chatbot'))
             return redirect(next_url or url_for('dashboard'))
         flash('Forkert brugernavn eller adgangskode.', 'danger')
     return render_template('login.html', form=form, hide_header=True)
@@ -3664,12 +3719,15 @@ def admin_add_user():
         if User.query.filter_by(username=form.username.data).first():
             flash('Brugernavnet er allerede i brug.', 'danger')
         else:
-            sales_only = form.sales_only.data
+            sales_only  = form.sales_only.data
+            budget_only = form.budget_only.data
             user = User(
                 username=form.username.data,
                 is_admin=form.is_admin.data,
                 can_access_sales_chatbot=form.can_access_sales_chatbot.data or sales_only,
                 sales_only=sales_only,
+                can_access_budget_agent=form.can_access_budget_agent.data or budget_only,
+                budget_only=budget_only,
             )
             user.set_password(form.password.data)
             db.session.add(user)
@@ -3726,6 +3784,28 @@ def admin_toggle_sales_chatbot(user_id):
         label = 'Ingen adgang'
     db.session.commit()
     flash(f'Salgs-adgang for {user.username} sat til: {label}.', 'success')
+    return redirect(url_for('admin'))
+
+
+@app.route('/admin/users/<int:user_id>/toggle-budget-agent', methods=['POST'])
+@admin_required
+def admin_toggle_budget_agent(user_id):
+    user = User.query.get_or_404(user_id)
+    # Cycle: Ingen → Fuld adgang → Kun økonomi → Ingen
+    if not user.can_access_budget_agent and not user.budget_only:
+        user.can_access_budget_agent = True
+        user.budget_only = False
+        label = 'Fuld adgang'
+    elif user.can_access_budget_agent and not user.budget_only:
+        user.can_access_budget_agent = True
+        user.budget_only = True
+        label = 'Kun økonomi'
+    else:
+        user.can_access_budget_agent = False
+        user.budget_only = False
+        label = 'Ingen adgang'
+    db.session.commit()
+    flash(f'Budget-adgang for {user.username} sat til: {label}.', 'success')
     return redirect(url_for('admin'))
 
 
@@ -5217,7 +5297,9 @@ def integration_dw():
         dw.config = json.dumps(config)
         dw.updated_at = datetime.utcnow()
         db.session.commit()
-        _dw_schema_cache = None  # invalidate cached schema on credential change
+        _dw_schema_cache = None     # invalidate cached schemas on credential change
+        _budget_schema_cache = None
+        _budget_view_map.clear()
         flash('Datawarehouse indstillinger gemt.', 'success')
         return redirect(url_for('integration_dw'))
 
@@ -5591,6 +5673,440 @@ def api_sales_chat():
 
     # Persist the assistant turn
     assistant_turn = SalesMessage(
+        conversation_id=conv.id,
+        role='assistant',
+        content=answer,
+        sql_query=raw_sql,
+        row_count=row_count,
+    )
+    db.session.add(assistant_turn)
+    conv.updated_at = datetime.utcnow()
+    db.session.commit()
+
+    return jsonify({
+        'answer': answer,
+        'sql': raw_sql,
+        'row_count': row_count,
+        'conversation_id': conv.id,
+    })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Budget agent — database helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def get_budget_connection():
+    """Connect to BC2SQL_Data (same DB as sales DW) for budget views."""
+    return get_dw_connection()
+
+
+_budget_schema_cache = None
+_budget_account_names_cache = None
+_budget_view_map = {}   # kept for cache-invalidation compatibility
+
+_BUDGET_VIEW_SHORT_NAMES = {'vw_gl_actuals_vs_budget', 'vw_gl_entry_detailed'}
+
+
+def get_budget_schema() -> str:
+    global _budget_schema_cache
+    if _budget_schema_cache:
+        return _budget_schema_cache
+    conn = get_budget_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_NAME IN ('vw_GL_actuals_vs_budget', 'vw_GL_entry_detailed')
+        ORDER BY TABLE_NAME, ORDINAL_POSITION
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+    tables: dict = {}
+    for table, col, dtype in rows:
+        tables.setdefault(table, []).append(f"{col} {dtype}")
+    lines = [f"[{t}]({', '.join(cols)})" for t, cols in tables.items()]
+    _budget_schema_cache = "\n".join(lines)
+    return _budget_schema_cache
+
+
+def get_budget_account_names() -> str:
+    """Return a cached newline-separated list of all distinct Account Name values."""
+    global _budget_account_names_cache
+    if _budget_account_names_cache:
+        return _budget_account_names_cache
+    try:
+        conn = get_budget_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT DISTINCT [Account Name]
+            FROM [vw_GL_actuals_vs_budget]
+            WHERE [Account Name] IS NOT NULL
+            ORDER BY [Account Name]
+        """)
+        names = [row[0] for row in cursor.fetchall()]
+        conn.close()
+        _budget_account_names_cache = "\n".join(names)
+    except Exception as e:
+        logger.warning(f'Could not fetch budget account names: {e}')
+        _budget_account_names_cache = ''
+    return _budget_account_names_cache
+
+
+def _validate_budget_views(sql: str) -> tuple:
+    """Return (ok, offending_name). Allows budget views (any schema) and CTE names."""
+    cte_names = {m.lower() for m in re.findall(
+        r'(?:WITH|,)\s+(\w+)\s*(?:\([^)]*\))?\s+AS\s*\(', sql, re.IGNORECASE
+    )}
+
+    # Match full object references after FROM/JOIN, e.g.:
+    #   [dbo].[vw_GL_actuals_vs_budget]  |  [vw_GL_actuals_vs_budget]  |  plain_name
+    ref_pattern = re.compile(
+        r'\b(?:FROM|JOIN)\s+'
+        r'((?:\[[^\]]+\]|\w+)(?:\.(?:\[[^\]]+\]|\w+))*)',
+        re.IGNORECASE
+    )
+    for m in ref_pattern.finditer(sql):
+        full_ref = m.group(1)
+        # Extract all identifier parts (strip brackets)
+        parts = re.findall(r'\[([^\]]+)\]|(\w+)', full_ref)
+        tokens = [(a or b).lower() for a, b in parts]
+        # The last token is the actual object name; earlier tokens are schema/db
+        obj_name = tokens[-1] if tokens else ''
+        if obj_name and obj_name not in cte_names and obj_name not in _BUDGET_VIEW_SHORT_NAMES:
+            return False, obj_name
+    return True, ''
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Budget agent — routes
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.route('/budget-agent')
+@budget_agent_required
+def budget_agent():
+    user_id = session.get('user_id')
+    conversations = (BudgetConversation.query
+                     .filter_by(user_id=user_id)
+                     .order_by(BudgetConversation.updated_at.desc())
+                     .all())
+    return render_template('budget_agent.html', conversations=conversations)
+
+
+@app.route('/api/budget-db-views', methods=['GET'])
+@admin_required
+def api_budget_db_views():
+    """Diagnostic: list all objects visible to powerbi in JKF-Public-Data."""
+    try:
+        conn = get_budget_connection()
+        cursor = conn.cursor()
+
+        # Which database did we actually land in?
+        cursor.execute("SELECT DB_NAME() AS db, USER_NAME() AS usr, SCHEMA_NAME() AS sch")
+        ctx = cursor.fetchone()
+
+        # All views (INFORMATION_SCHEMA)
+        cursor.execute("""
+            SELECT TABLE_TYPE, TABLE_SCHEMA, TABLE_NAME
+            FROM INFORMATION_SCHEMA.TABLES
+            ORDER BY TABLE_TYPE, TABLE_SCHEMA, TABLE_NAME
+        """)
+        tables = cursor.fetchall()
+
+        # sys.objects for everything including synonyms
+        cursor.execute("""
+            SELECT o.type_desc, s.name AS schema_name, o.name
+            FROM sys.objects o
+            JOIN sys.schemas s ON s.schema_id = o.schema_id
+            ORDER BY o.type_desc, s.name, o.name
+        """)
+        sys_objs = cursor.fetchall()
+
+        # Synonym definitions
+        cursor.execute("""
+            SELECT name, base_object_name
+            FROM sys.synonyms
+            ORDER BY name
+        """)
+        synonyms = cursor.fetchall()
+
+        conn.close()
+        return jsonify({
+            'context': {'db': ctx[0], 'user': ctx[1], 'schema': ctx[2]},
+            'information_schema': [{'type': r[0], 'schema': r[1], 'name': r[2]} for r in tables],
+            'sys_objects': [{'type': r[0], 'schema': r[1], 'name': r[2]} for r in sys_objs],
+            'synonyms': [{'name': r[0], 'points_to': r[1]} for r in synonyms],
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/budget-conversations', methods=['GET'])
+@budget_agent_required
+def api_budget_conversations():
+    user_id = session.get('user_id')
+    convs = (BudgetConversation.query
+             .filter_by(user_id=user_id)
+             .order_by(BudgetConversation.updated_at.desc())
+             .all())
+    return jsonify([{
+        'id': c.id,
+        'title': c.title,
+        'updated_at': c.updated_at.isoformat(),
+    } for c in convs])
+
+
+@app.route('/api/budget-conversations/<int:conv_id>', methods=['GET'])
+@budget_agent_required
+def api_budget_conversation_detail(conv_id):
+    user_id = session.get('user_id')
+    conv = BudgetConversation.query.filter_by(id=conv_id, user_id=user_id).first_or_404()
+    return jsonify({
+        'id': conv.id,
+        'title': conv.title,
+        'messages': [{
+            'role': m.role,
+            'content': m.content,
+            'sql': m.sql_query,
+            'row_count': m.row_count,
+        } for m in conv.messages],
+    })
+
+
+@app.route('/api/budget-conversations/<int:conv_id>', methods=['DELETE'])
+@budget_agent_required
+def api_budget_conversation_delete(conv_id):
+    user_id = session.get('user_id')
+    conv = BudgetConversation.query.filter_by(id=conv_id, user_id=user_id).first_or_404()
+    db.session.delete(conv)
+    db.session.commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/budget-chat', methods=['POST'])
+@budget_agent_required
+def api_budget_chat():
+    data = request.get_json(silent=True) or {}
+    message = (data.get('message') or '').strip()
+    history = data.get('history') or []
+    conversation_id = data.get('conversation_id')
+
+    if not message:
+        return jsonify({'error': 'Ingen besked modtaget.'}), 400
+
+    user_id = session.get('user_id')
+
+    # Resolve or create BudgetConversation
+    conv = None
+    if conversation_id:
+        conv = BudgetConversation.query.filter_by(id=conversation_id, user_id=user_id).first()
+    if conv is None:
+        title = message[:60] + ('…' if len(message) > 60 else '')
+        conv = BudgetConversation(user_id=user_id, title=title)
+        db.session.add(conv)
+        db.session.flush()
+
+    user_turn = BudgetMessage(
+        conversation_id=conv.id,
+        role='user',
+        content=message,
+    )
+    db.session.add(user_turn)
+
+    try:
+        schema = get_budget_schema()
+    except Exception as e:
+        logger.error(f'Budget schema fetch failed: {e}')
+        return jsonify({'error': 'Kunne ikke oprette forbindelse til budget-datalageret.'}), 500
+
+    account_names = get_budget_account_names()
+    account_names_section = (
+        "PRÆCISE KONTONAVNE (Account Name) — brug disse EKSAKT ved filtrering, inkl. store/små bogstaver og bindestreger:\n"
+        f"{account_names}\n\n"
+        "Når brugeren nævner en konto (f.eks. 'IT konsulent' eller 'lønninger'), find det nærmeste navn på listen ovenfor "
+        "og brug det præcist i WHERE-klausulen. Brug ALTID = eller IN med præcise navne — brug kun LIKE som absolut sidste udvej.\n\n"
+    ) if account_names else ''
+
+    sql_system = (
+        "Du er en T-SQL ekspert for JKF's budget-datawarehouse (SQL Server, database: BC2SQL_Data).\n\n"
+        "Du har adgang til præcis to views — brug navnene PRÆCIS som angivet (ingen schema-prefix):\n\n"
+        "1. [vw_GL_actuals_vs_budget] — Budgetafvigelser pr. konto/afdeling/måned.\n"
+        "   Kolonner: G_L Account No_ (kontonummer), Account Name (kontonavn), Year (int), Month (int), "
+        "Global Dimension 1 Code (afdelingskode), Department Name (afdelingsnavn), "
+        "Actual (aktuel beløb for måneden), Budget (budgetteret beløb), Variance (afvigelse = Actual - Budget).\n"
+        "   Brug dette view til: afvigelsesanalyse, oversigt over over/underforbrug, budget vs. aktuel pr. konto eller afdeling.\n\n"
+        "2. [vw_GL_entry_detailed] — Rå posteringer fra kontoplanen.\n"
+        "   Kolonner: Account Name (kontonavn), Posting Date (bogføringsdato), Document No_ (bilagsnummer), "
+        "Description (beskrivelse), Amount (beløb), Department Code (afdelingskode), "
+        "Department Name (afdelingsnavn), Source No_ (leverandør-/kildenummer), Source Name (leverandørnavn).\n"
+        "   Brug dette view til: forklaring af specifikke posteringer, leverandøroverblik, sammenligning med tidligere år, "
+        "analyse af hvad der udgør en kontos forbrug.\n\n"
+        "STRATEGI – vælg det rette view (eller begge):\n"
+        "- 'Hvad er afvigelsen?' / 'Hvilke konti er over budget?' → brug [vw_GL_actuals_vs_budget]\n"
+        "- 'Hvorfor er konto X over budget?' / 'Hvad er der posteret?' / 'Sammenlign med sidste år' → brug [vw_GL_entry_detailed]\n"
+        "- Kombiner begge views via CTE eller JOIN, når du vil konstatere afvigelsen OG forklare den med posteringer.\n\n"
+        "FULDT SKEMA:\n"
+        f"{schema}\n\n"
+        f"{account_names_section}"
+        "OBLIGATORISKE REGLER:\n"
+        "0. Generér ALTID et SELECT-statement. Du har fuld adgang til dataene.\n"
+        "1. Returner KUN rå SQL, ingen forklaring, ingen markdown, ingen ```.\n"
+        "2. Brug firkantede parenteser om view-navne og kolonner med mellemrum eller specialtegn.\n"
+        "2b. Inkluder ALTID [G_L Account No_] i SELECT når [Account Name] er med — kontonummer skal altid fremgå ved siden af kontonavnet.\n"
+        "3. Subquery-aliaser UDEN AS: FROM (SELECT ...) sub — IKKE FROM (SELECT ...) AS sub.\n"
+        "4. Kolonne-aliaser bruger AS normalt: SUM(Actual) AS AktuelTotal.\n"
+        "5. Brug TOP n (ikke LIMIT) for at begrænse resultater.\n"
+        "6. CTEs: WITH ctename AS (SELECT ...) SELECT ... — uden semikolon foran WITH.\n"
+        "7. Brug aldrig: DROP, INSERT, UPDATE, DELETE, TRUNCATE, ALTER, CREATE, EXEC, QUALIFY.\n"
+        "8. ORDER BY er IKKE tilladt inde i subqueries eller CTEs uden TOP.\n"
+        "9. Du må KUN forespørge på de to views nævnt ovenfor — ingen andre tabeller eller views.\n"
+        "10. Negative Variance-værdier betyder overforbrug (Actual > Budget); positive betyder underforbrug.\n"
+        "11. Bevar årsfilter fra samtalehistorikken medmindre brugeren eksplicit angiver et andet år.\n"
+        "12. VIGTIGT — kolonner til dato varierer mellem views:\n"
+        "    [vw_GL_actuals_vs_budget]: har kolonnerne [Year] og [Month] direkte — brug dem i WHERE, GROUP BY og SELECT.\n"
+        "    [vw_GL_entry_detailed]: har INGEN [Year] eller [Month] kolonne — brug KUN:\n"
+        "      WHERE: YEAR([Posting Date]) IN (...) AND MONTH([Posting Date]) <= ...\n"
+        "      SELECT: YEAR([Posting Date]) AS [Year], MONTH([Posting Date]) AS [Month]\n"
+        "      GROUP BY: YEAR([Posting Date]), MONTH([Posting Date])\n"
+        "    Brug ALDRIG [Year] eller [Month] direkte i [vw_GL_entry_detailed] — det giver fejl 207.\n"
+        f"13. DATO-KONTEKST: I dag er {datetime.now().strftime('%Y-%m-%d')}. Indeværende år = {datetime.now().year}. Indeværende måned = {datetime.now().month}.\n"
+        "    - Inkluder ALTID Year og Month i SELECT, så brugeren kan se hvilken periode tallene tilhører.\n"
+        "    - Hent ALTID det efterspurgte år OG året før i samme forespørgsel, så svaret kan sammenligne med forrige år.\n"
+        f"    - SAMME PERIODE-REGEL (kritisk): sammenlign kun de måneder der er gået i det nyeste år.\n"
+        f"      Vi er i måned {datetime.now().month} ({datetime.now().year}), så filtrer begge år til Month <= {datetime.now().month} medmindre andet angives.\n"
+        "      Eksempler:\n"
+        f"      Ingen årsangivelse (standard) → WHERE Year IN ({datetime.now().year - 1}, {datetime.now().year}) AND Month <= {datetime.now().month}\n"
+        f"      'I 2025' → WHERE Year IN (2024, 2025) AND Month <= 12  -- fuldt år, ingen månedsbegrænsning\n"
+        "      'I 2023' → WHERE Year IN (2022, 2023) AND Month <= 12\n"
+        f"      'Denne måned' → WHERE Year IN ({datetime.now().year - 1}, {datetime.now().year}) AND Month = {datetime.now().month}\n"
+        "      'Hele 2025' / 'hele året' → Month <= 12 (ingen månedsbegrænsning)\n"
+        "    - Undtagelse: hvis brugeren spørger om et historisk år (ikke indeværende), brug Month <= 12 (hele året).\n"
+        "    - Undtagelse: hvis brugeren EKSPLICIT siger 'kun i år' eller 'kun [årstal]' uden sammenligning, hent kun det ene år.\n"
+        "    - Sig ALDRIG 'ingen data for forrige år' — forrige år er altid inkluderet i forespørgslen.\n"
+    )
+
+    sql_messages = [{'role': 'system', 'content': sql_system}]
+    for h in history[-10:]:
+        if h.get('role') in ('user', 'assistant') and h.get('content'):
+            sql_messages.append({'role': h['role'], 'content': h['content']})
+    sql_messages.append({'role': 'user', 'content': message})
+
+    try:
+        sql_resp = client.chat.completions.create(
+            model='gpt-5.4-mini',
+            messages=sql_messages,
+            temperature=0,
+            max_completion_tokens=800,
+        )
+        raw_sql = _extract_sql(sql_resp.choices[0].message.content or '')
+    except Exception as e:
+        logger.error(f'Budget SQL generation failed: {e}')
+        return jsonify({'error': 'Kunne ikke generere SQL-forespørgsel.'}), 500
+
+    # Handle prose/non-SQL response
+    _SQL_START = re.compile(r'^\s*(SELECT|WITH|;WITH)\b', re.IGNORECASE)
+    if not _SQL_START.match(raw_sql):
+        try:
+            cleanup_resp = client.chat.completions.create(
+                model='gpt-5.4-mini',
+                messages=[
+                    {'role': 'system', 'content': (
+                        'Du er en hjælpsom budget-assistent hos JKF. '
+                        'Omskriv følgende besked til et pænt, kort dansk svar. '
+                        'Forklar venligt at du ikke har nok information til at svare præcist, '
+                        'og opfordr brugeren til at stille spørgsmålet på ny.'
+                    )},
+                    {'role': 'user', 'content': raw_sql},
+                ],
+                max_completion_tokens=300,
+                temperature=0.3,
+            )
+            clean_answer = cleanup_resp.choices[0].message.content or raw_sql
+        except Exception:
+            clean_answer = 'Jeg har ikke nok information til at svare. Prøv at stille spørgsmålet på ny.'
+        return jsonify({'answer': clean_answer, 'sql': None, 'row_count': None})
+
+    if _DW_DANGEROUS.search(raw_sql):
+        return jsonify({'error': 'Sikkerhedsfejl: kun læse-forespørgsler er tilladt.'}), 400
+
+    if _DW_UNSUPPORTED.search(raw_sql):
+        return jsonify({'error': 'Den genererede SQL bruger QUALIFY, som ikke understøttes. Prøv at omformulere spørgsmålet.'}), 400
+
+    budget_ok, bad_ref = _validate_budget_views(raw_sql)
+    if not budget_ok:
+        logger.warning(f'Budget SQL validation blocked reference: {bad_ref}')
+        return jsonify({'error': f'Adgangsfejl: forespørgslen forsøgte at tilgå "{bad_ref}", som ikke er tilladt.'}), 400
+
+    logger.info(f'Budget SQL generated:\n{raw_sql}')
+    try:
+        conn = get_budget_connection()
+        cursor = conn.cursor(as_dict=True)
+        cursor.execute(raw_sql)
+        rows = cursor.fetchmany(500)
+        conn.close()
+        row_count = len(rows)
+        if rows:
+            headers = list(rows[0].keys())
+            lines = ['\t'.join(headers)]
+            for r in rows:
+                lines.append('\t'.join(str(r[h]) for h in headers))
+            result_text = '\n'.join(lines)
+        else:
+            result_text = '(ingen rækker)'
+    except Exception as e:
+        err_str = str(e)
+        logger.error(f'Budget query failed: {e}\nSQL was:\n{raw_sql}')
+        if '1033' in err_str:
+            return jsonify({'error': 'Den genererede SQL indeholder ORDER BY i en subquery uden TOP. Prøv at omformulere spørgsmålet.'}), 500
+        return jsonify({'error': f'Databasefejl: {err_str}'}), 500
+
+    answer_system = (
+        "Du er en hjælpsom budget-analytiker hos JKF. Svar altid på dansk.\n\n"
+        "Din opgave er at forklare budgetafvigelser klart og præcist — angiv ALTID:\n"
+        "1. Konstateringen: hvad er afvigelsen (beløb og procent af budget)?\n"
+        "2. Forklaringen: hvad udgør forbruget (posteringer, leverandører, perioder)?\n"
+        "3. Evt. sammenligning: er dette anderledes end samme periode sidste år?\n\n"
+        "KONTONAVNE OG KONTONUMRE:\n"
+        "- Når du omtaler en konto, skriv ALTID kontonummer og navn sammen, f.eks.: **IT-konsulent (6320)**.\n"
+        "- I tabeller: inkluder kolonnen Kontonummer (G_L Account No_) som første kolonne ved siden af Kontonavn.\n"
+        "- Nævn aldrig et kontonavn uden kontonummeret i parentes.\n\n"
+        "FORMATERINGSREGLER:\n"
+        "- Brug markdown-tabel (|) til tabeldata med flere rækker.\n"
+        "- Brug punktopstilling til lister og opsummeringer.\n"
+        "- Brug **fed** til vigtige tal og nøgleord.\n"
+        "- TALFORMAT (kritisk): dansk tusindtalsseparator (.), komma som decimaltegn.\n"
+        "  Eksempel: 53.980 DKK, -12,3%.\n"
+        "  Beløb: ingen decimaler. Procenter: 1 decimal.\n"
+        "  ALDRIG afkort tal — 53980 skrives som 53.980, ikke 53,98.\n"
+        "- Negative afvigelser = overforbrug (fremhæv med ⚠️ eller **fed**).\n"
+        "- Positive afvigelser = underforbrug.\n"
+        "- Afslut med en kort konklusion eller et opfølgningsforslag."
+    )
+
+    answer_messages = [
+        {'role': 'system', 'content': answer_system},
+        {
+            'role': 'user',
+            'content': (
+                f"Brugerens spørgsmål: {message}\n\n"
+                f"SQL der blev kørt:\n{raw_sql}\n\n"
+                f"Resultat ({row_count} rækker):\n{result_text}"
+            ),
+        },
+    ]
+
+    try:
+        ans_resp = client.chat.completions.create(
+            model='gpt-5.4-mini',
+            messages=answer_messages,
+            temperature=0.3,
+            max_completion_tokens=3000,
+        )
+        answer = ans_resp.choices[0].message.content or ''
+    except Exception as e:
+        logger.error(f'Budget answer generation failed: {e}')
+        return jsonify({'error': 'Kunne ikke formulere svar.'}), 500
+
+    assistant_turn = BudgetMessage(
         conversation_id=conv.id,
         role='assistant',
         content=answer,

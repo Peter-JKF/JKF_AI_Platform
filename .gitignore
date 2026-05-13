@@ -30,3 +30,7 @@ uploads/
 
 # Selenium / webdriver cache
 .wdm/
+
+# Local guides (not needed in repo)
+GIT_WORKFLOW.md
+SERVER_MIGRATION.md
