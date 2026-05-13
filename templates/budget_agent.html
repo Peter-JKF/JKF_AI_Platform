@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Budget-assistent – JKF{% endblock %}
+{% block title %}Budget Agent – JKF{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -12,8 +12,8 @@
 }
 
 /* ── Budget accent color (indigo/slate, distinct from sales green) ── */
-:root { --ba-accent: #4f46e5; }
-[data-theme="dark"] { --ba-accent: #6366f1; }
+:root { --ba-accent: #214786; }
+[data-theme="dark"] { --ba-accent: #3b6cb5; }
 
 /* ── History sidebar ── */
 .ba-history {
@@ -346,16 +346,23 @@
                 </button>
                 <div>
                     <h2 class="mb-0" style="font-size:1.25rem;">
-                        <i class="fas fa-balance-scale me-2" style="color: var(--ba-accent);"></i>Budget-assistent
+                        <i class="fas fa-balance-scale me-2" style="color: var(--ba-accent);"></i>Budget Agent
                     </h2>
                     <p class="text-muted mb-0" style="font-size:0.82rem;">
                         Spørg om budgetafvigelser, forbrug pr. konto eller afdeling – direkte fra ERP-data
                     </p>
                 </div>
             </div>
-            <button class="btn btn-sm btn-outline-secondary" id="newConvBtn">
-                <i class="fas fa-plus me-1"></i>Ny samtale
-            </button>
+            <div class="d-flex align-items-center gap-2">
+                <div id="exportBtns" style="display:none;" class="d-flex gap-1">
+                    <button class="btn btn-sm btn-outline-secondary" id="exportPdfBtn" title="Eksporter som PDF">
+                        <i class="fas fa-file-pdf me-1" style="color:#c0392b;"></i>PDF
+                    </button>
+                </div>
+                <button class="btn btn-sm btn-outline-secondary" id="newConvBtn">
+                    <i class="fas fa-plus me-1"></i>Ny samtale
+                </button>
+            </div>
         </div>
 
         <div class="ba-chat-messages" id="chatMessages"></div>
@@ -396,6 +403,47 @@
     </div>
 </div>
 
+<!-- ── PDF export selection modal ── -->
+<div class="modal fade" id="pdfExportModal" tabindex="-1" aria-labelledby="pdfExportModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered" style="max-width: 520px;">
+        <div class="modal-content">
+            <div class="modal-header border-0 pb-0">
+                <h5 class="modal-title" id="pdfExportModalLabel">
+                    <i class="fas fa-file-pdf me-2" style="color:#c0392b;"></i>Eksporter som PDF
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body pt-3 pb-1">
+                <div class="d-flex align-items-center justify-content-between mb-3 p-3 rounded"
+                     style="background:var(--bg-secondary,#f8fafc); border:1px solid var(--border);">
+                    <div>
+                        <div class="fw-semibold" style="font-size:.875rem;">Inkluder bruger-spørgsmål</div>
+                        <div class="text-muted" style="font-size:.78rem;">Vis dine spørgsmål over hvert svar</div>
+                    </div>
+                    <div class="form-check form-switch mb-0">
+                        <input class="form-check-input" type="checkbox" id="pdfIncludeUser" checked>
+                    </div>
+                </div>
+                <div class="mb-2 d-flex align-items-center justify-content-between">
+                    <span style="font-size:.82rem; font-weight:600; color:var(--text-muted);">VÆLG SVAR DER SKAL INKLUDERES</span>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-link btn-sm p-0 text-decoration-none" id="pdfSelectAll" style="font-size:.78rem;">Vælg alle</button>
+                        <span class="text-muted" style="font-size:.78rem;">·</span>
+                        <button class="btn btn-link btn-sm p-0 text-decoration-none" id="pdfSelectNone" style="font-size:.78rem;">Fravælg alle</button>
+                    </div>
+                </div>
+                <div id="pdfMsgList" style="max-height:320px; overflow-y:auto; border:1px solid var(--border); border-radius:8px;"></div>
+            </div>
+            <div class="modal-footer border-0 pt-2">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuller</button>
+                <button type="button" class="btn btn-danger" id="pdfExportConfirmBtn">
+                    <i class="fas fa-file-pdf me-1"></i>Eksporter PDF
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 {% endblock %}
 
 {% block extra_js %}
@@ -407,15 +455,20 @@ const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute
 let history = [];
 let currentConvId = null;
 let isLoading = false;
+let loadedMessages = [];
 
 const messagesEl      = document.getElementById('chatMessages');
 const inputEl         = document.getElementById('userInput');
 const sendBtn         = document.getElementById('sendBtn');
 const newConvBtn      = document.getElementById('newConvBtn');
+const exportBtns      = document.getElementById('exportBtns');
+const exportPdfBtn    = document.getElementById('exportPdfBtn');
 const historyList     = document.getElementById('historyList');
 const baHistory       = document.getElementById('baHistory');
 const sidebarOpenBtn  = document.getElementById('sidebarOpenBtn');
 const collapseBtn     = document.getElementById('baHistoryCollapseBtn');
+
+function setExportVisible(v) { exportBtns.style.display = v ? '' : 'none'; }
 
 /* ── Sidebar collapse ── */
 let sidebarCollapsed = localStorage.getItem('baSidebarCollapsed') === 'true';
@@ -560,12 +613,15 @@ async function loadConversation(id, el) {
         const data = await res.json();
         messagesEl.innerHTML = '';
         history = [];
+        loadedMessages = [];
         currentConvId = data.id;
 
         for (const m of data.messages) {
             appendMessage(m.role, m.content, { sql: m.sql, row_count: m.row_count });
             history.push({ role: m.role, content: m.content });
+            loadedMessages.push({ id: m.id, role: m.role, content: m.content });
         }
+        setExportVisible(loadedMessages.some(m => m.role === 'assistant'));
     } catch (e) {
         appendError('Kunne ikke indlæse samtalen.');
     }
@@ -653,6 +709,9 @@ async function sendMessage() {
         } else {
             appendMessage('assistant', data.answer, { sql: data.sql, row_count: data.row_count });
             history.push({ role: 'assistant', content: data.answer });
+            loadedMessages.push({ id: `idx-${Date.now()}`, role: 'user', content: text });
+            loadedMessages.push({ id: data.msg_id || `idx-${Date.now()+1}`, role: 'assistant', content: data.answer });
+            setExportVisible(true);
 
             if (data.conversation_id) {
                 const isNew = (currentConvId === null);
@@ -677,6 +736,62 @@ async function sendMessage() {
     inputEl.focus();
 }
 
+/* ── PDF export ── */
+const pdfModal         = new bootstrap.Modal(document.getElementById('pdfExportModal'));
+const pdfMsgList       = document.getElementById('pdfMsgList');
+const pdfIncludeUser   = document.getElementById('pdfIncludeUser');
+const pdfSelectAll     = document.getElementById('pdfSelectAll');
+const pdfSelectNone    = document.getElementById('pdfSelectNone');
+const pdfExportConfirm = document.getElementById('pdfExportConfirmBtn');
+
+exportPdfBtn.addEventListener('click', () => {
+    if (!currentConvId) return;
+    pdfMsgList.innerHTML = '';
+    const assistants = loadedMessages.filter(m => m.role === 'assistant');
+    if (assistants.length === 0) {
+        pdfMsgList.innerHTML = '<div class="text-muted p-3" style="font-size:.85rem;">Ingen svar at vælge.</div>';
+    } else {
+        assistants.forEach((m, idx) => {
+            const preview = (m.content || '').replace(/[#*|`]/g, '').trim().slice(0, 90);
+            const id = m.id || `idx-${idx}`;
+            const isLast = idx === assistants.length - 1;
+            const item = document.createElement('div');
+            item.style.cssText = `display:flex;align-items:flex-start;gap:10px;padding:10px 14px;${isLast ? '' : 'border-bottom:1px solid var(--border);'}`;
+            item.innerHTML = `
+                <input class="form-check-input mt-1 pdf-msg-check" type="checkbox"
+                       value="${id}" id="pdfmsg-${id}" checked>
+                <label for="pdfmsg-${id}" style="font-size:.82rem;line-height:1.45;cursor:pointer;flex:1;">
+                    <strong style="font-size:.78rem;color:var(--text-muted);">SVAR ${idx + 1}</strong><br>
+                    ${preview}${(m.content || '').length > 90 ? '…' : ''}
+                </label>`;
+            pdfMsgList.appendChild(item);
+        });
+    }
+    pdfModal.show();
+});
+
+pdfSelectAll.addEventListener('click',  () => pdfMsgList.querySelectorAll('.pdf-msg-check').forEach(c => c.checked = true));
+pdfSelectNone.addEventListener('click', () => pdfMsgList.querySelectorAll('.pdf-msg-check').forEach(c => c.checked = false));
+
+pdfExportConfirm.addEventListener('click', () => {
+    const checked = [...pdfMsgList.querySelectorAll('.pdf-msg-check:checked')].map(c => c.value);
+    const realIds = checked.filter(v => !v.startsWith('idx-'));
+    const includeUser = pdfIncludeUser.checked ? '1' : '0';
+    const params = new URLSearchParams({ include_user: includeUser });
+    if (realIds.length > 0) params.set('msg_ids', realIds.join(','));
+    pdfModal.hide();
+
+    let pdfFrame = document.getElementById('pdfPrintFrame');
+    if (!pdfFrame) {
+        pdfFrame = document.createElement('iframe');
+        pdfFrame.id = 'pdfPrintFrame';
+        pdfFrame.style.cssText = 'position:fixed;width:0;height:0;border:0;opacity:0;pointer-events:none;';
+        document.body.appendChild(pdfFrame);
+    }
+    pdfFrame.onload = () => pdfFrame.contentWindow.print();
+    pdfFrame.src = `/api/budget-conversations/${currentConvId}/export/pdf?${params}`;
+});
+
 /* ── Event listeners ── */
 sendBtn.addEventListener('click', sendMessage);
 inputEl.addEventListener('keydown', e => {
@@ -685,7 +800,9 @@ inputEl.addEventListener('keydown', e => {
 newConvBtn.addEventListener('click', () => {
     currentConvId = null;
     history = [];
+    loadedMessages = [];
     messagesEl.innerHTML = '';
+    setExportVisible(false);
     document.querySelectorAll('.ba-history-item').forEach(el => el.classList.remove('active'));
     inputEl.focus();
 });

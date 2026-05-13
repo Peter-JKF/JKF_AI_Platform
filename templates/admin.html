@@ -4,141 +4,156 @@
 
 {% block extra_css %}
 <style>
-/* ── Role badge ── */
+/* ── Role pill ── */
 .role-pill {
     display: inline-flex;
     align-items: center;
     gap: 0.3rem;
-    padding: 0.25rem 0.65rem;
+    padding: 0.2rem 0.6rem;
     border-radius: 999px;
-    font-size: 0.75rem;
-    font-weight: 500;
+    font-size: 0.73rem;
+    font-weight: 600;
     letter-spacing: .01em;
+    white-space: nowrap;
 }
-.role-pill.admin    { background: #18181b; color: #fff; }
-.role-pill.sales    { background: #e0f2fe; color: #0369a1; }
+.role-pill.admin      { background: #1e293b; color: #fff; }
+.role-pill.platform   { background: #dce6f5; color: #214786; }
 .role-pill.salesonly  { background: #fef3c7; color: #92400e; }
 .role-pill.budgetonly { background: #ede9fe; color: #5b21b6; }
+.role-pill.agentsonly { background: #e0f2fe; color: #0369a1; }
 .role-pill.user       { background: #f1f5f9; color: #64748b; }
-[data-theme="dark"] .role-pill.sales      { background: #0c4a6e; color: #7dd3fc; }
-[data-theme="dark"] .role-pill.salesonly  { background: #451a03; color: #fcd34d; }
-[data-theme="dark"] .role-pill.budgetonly { background: #2e1065; color: #c4b5fd; }
-[data-theme="dark"] .role-pill.user       { background: #1e293b; color: #94a3b8; }
+[data-theme="dark"] .role-pill.admin      { background: #0f172a;  color: #e2e8f0; }
+[data-theme="dark"] .role-pill.platform   { background: #1a2e4a;  color: #93c5fd; }
+[data-theme="dark"] .role-pill.salesonly  { background: #451a03;  color: #fcd34d; }
+[data-theme="dark"] .role-pill.budgetonly { background: #2e1065;  color: #c4b5fd; }
+[data-theme="dark"] .role-pill.agentsonly { background: #0c2a40;  color: #7dd3fc; }
+[data-theme="dark"] .role-pill.user       { background: #1e293b;  color: #94a3b8; }
 
-/* ── Access pill buttons ── */
+/* ── Access pill (table toggle buttons) ── */
 .access-pill {
     display: inline-flex;
     align-items: center;
     gap: 0.3rem;
-    padding: 0.25rem 0.7rem;
+    padding: 0.22rem 0.65rem;
     border-radius: 999px;
-    font-size: 0.75rem;
+    font-size: 0.73rem;
     font-weight: 500;
     border: 1.5px solid transparent;
     cursor: pointer;
-    transition: opacity 0.15s, filter 0.15s;
+    transition: opacity .15s, filter .15s;
     white-space: nowrap;
     background: none;
+    line-height: 1.4;
 }
-.access-pill:hover { filter: brightness(0.93); }
-.access-pill.on-sales  { background: #dcfce7; color: #15803d; border-color: #bbf7d0; }
-.access-pill.on-budget { background: #ede9fe; color: #5b21b6; border-color: #ddd6fe; }
-.access-pill.on-admin  { background: #f1f5f9; color: #475569; border-color: #e2e8f0; cursor: default; }
-.access-pill.off       { background: #f8fafc; color: #94a3b8; border-color: #e2e8f0; }
-.access-pill.lock      { background: #fff7ed; color: #c2410c; border-color: #fed7aa; }
-[data-theme="dark"] .access-pill.on-sales  { background: #052e16; color: #4ade80; border-color: #14532d; }
-[data-theme="dark"] .access-pill.on-budget { background: #2e1065; color: #c4b5fd; border-color: #4c1d95; }
-[data-theme="dark"] .access-pill.on-admin  { background: #1e293b; color: #94a3b8; border-color: #334155; }
-[data-theme="dark"] .access-pill.off       { background: #0f172a; color: #475569; border-color: #1e293b; }
+.access-pill:hover { filter: brightness(.93); }
+.access-pill.on       { background: #dce6f5; color: #214786; border-color: #b4c9e6; }
+.access-pill.on-admin { background: #f1f5f9; color: #475569; border-color: #e2e8f0; cursor: default; }
+.access-pill.off      { background: #f8fafc; color: #94a3b8; border-color: #e2e8f0; }
+.access-pill.lock     { background: #fff7ed; color: #c2410c; border-color: #fed7aa; }
+[data-theme="dark"] .access-pill.on       { background: #1a2e4a; color: #93c5fd; border-color: #223c60; }
+[data-theme="dark"] .access-pill.on-admin { background: #1e293b; color: #94a3b8; border-color: #334155; }
+[data-theme="dark"] .access-pill.off      { background: #0f172a; color: #475569; border-color: #1e293b; }
 
-/* ── Permission cards in modal ── */
-.perm-section { margin-top: 1.25rem; }
+/* ── Modal: permission section ── */
+.perm-section { margin-top: 1.2rem; }
 .perm-section-title {
-    font-size: 0.7rem;
-    font-weight: 600;
+    font-size: 0.68rem;
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: .06em;
+    letter-spacing: .07em;
     color: var(--text-muted, #94a3b8);
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.55rem;
 }
 .perm-card {
     border: 1.5px solid var(--border, #e2e8f0);
     border-radius: 10px;
-    padding: 0.75rem 1rem;
-    margin-bottom: 0.5rem;
-    transition: border-color 0.15s, background 0.15s;
+    padding: 0.8rem 1rem;
+    margin-bottom: 0.45rem;
+    transition: border-color .15s, background .15s;
 }
-#adminCard:has(input:checked) {
-    border-color: #0ea5e9;
-    background: #f0f9ff;
+.perm-card.active-card {
+    border-color: #214786;
+    background: #f0f5ff;
 }
-[data-theme="dark"] #adminCard:has(input:checked) {
-    border-color: #0ea5e9;
-    background: #0c2d3f;
+[data-theme="dark"] .perm-card.active-card {
+    border-color: #3b6cb5;
+    background: #0d1e35;
 }
 .perm-card label {
     cursor: pointer;
     width: 100%;
     display: flex;
     align-items: center;
-    gap: 0.6rem;
+    gap: 0.65rem;
     margin: 0;
 }
-.perm-card .perm-icon {
-    width: 28px;
-    height: 28px;
+.perm-icon {
+    width: 30px;
+    height: 30px;
     border-radius: 8px;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 0.75rem;
+    font-size: 0.78rem;
     flex-shrink: 0;
+    background: #dce6f5;
+    color: #214786;
 }
-.perm-card .perm-icon.admin  { background: #18181b; color: #fff; }
-.perm-card .perm-icon.sales  { background: #0ea5e9; color: #fff; }
-.perm-card .perm-icon.budget { background: #6366f1; color: #fff; }
-.perm-card .perm-text { flex: 1; }
-.perm-card .perm-name { font-size: 0.88rem; font-weight: 500; color: var(--text-primary); }
-.perm-card .perm-desc { font-size: 0.75rem; color: var(--text-muted, #94a3b8); margin-top: 1px; }
-.perm-card input[type=checkbox] { width: 1rem; height: 1rem; flex-shrink: 0; cursor: pointer; }
+.perm-icon.dark { background: #1e293b; color: #fff; }
+.perm-text { flex: 1; min-width: 0; }
+.perm-name { font-size: 0.875rem; font-weight: 600; color: var(--text-primary); display: block; }
+.perm-desc { font-size: 0.73rem; color: var(--text-muted, #94a3b8); margin-top: 1px; display: block; }
+.perm-card input[type=checkbox] { width: 1rem; height: 1rem; flex-shrink: 0; cursor: pointer; accent-color: #214786; }
 
-/* Sales level selector */
-.sales-level {
+/* ── Agent access toggle buttons ── */
+.agent-toggle {
     display: flex;
-    gap: 0.4rem;
-    margin-top: 0.5rem;
-    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin-top: 0.65rem;
 }
-.sales-level-btn {
+.agent-btn {
     flex: 1;
-    min-width: 90px;
-    padding: 0.4rem 0.5rem;
-    border-radius: 8px;
+    padding: 0.35rem 0.5rem;
+    border-radius: 7px;
     border: 1.5px solid var(--border, #e2e8f0);
     background: none;
-    font-size: 0.78rem;
+    font-size: 0.75rem;
     font-weight: 500;
     color: var(--text-muted, #64748b);
     cursor: pointer;
     text-align: center;
-    transition: border-color 0.15s, background 0.15s, color 0.15s;
+    transition: border-color .15s, background .15s, color .15s;
 }
-.sales-level-btn.selected {
-    border-color: #0ea5e9;
-    background: #e0f2fe;
-    color: #0369a1;
+.agent-btn.selected {
+    border-color: #214786;
+    background: #dce6f5;
+    color: #214786;
+    font-weight: 600;
 }
-[data-theme="dark"] .sales-level-btn.selected {
-    border-color: #0ea5e9;
-    background: #0c4a6e;
-    color: #7dd3fc;
+[data-theme="dark"] .agent-btn.selected {
+    border-color: #3b6cb5;
+    background: #1a2e4a;
+    color: #93c5fd;
+}
+
+/* ── Table header ── */
+thead th {
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--text-muted);
+    white-space: nowrap;
 }
 </style>
 {% endblock %}
 
 {% block main_content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
-    <h2 class="mb-0">Brugere</h2>
+    <div>
+        <h2 class="mb-0">Brugere</h2>
+        <p class="text-muted mb-0" style="font-size:.85rem;">Administrer adgang og agentrettigheder</p>
+    </div>
     <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addUserModal">
         <i class="fas fa-plus me-1"></i>Opret bruger
     </button>
@@ -149,10 +164,11 @@
         <table class="table table-hover mb-0">
             <thead>
                 <tr>
-                    <th>Brugernavn</th>
+                    <th style="padding-left:1.25rem;">Bruger</th>
                     <th>Rolle</th>
-                    <th>Salgs-assistent</th>
-                    <th>Budget-assistent</th>
+                    <th>Salgs Agent</th>
+                    <th>Budget Agent</th>
+                    <th>Master Agent</th>
                     <th>Oprettet</th>
                     <th></th>
                 </tr>
@@ -160,82 +176,117 @@
             <tbody>
                 {% for u in users %}
                 <tr>
-                    <td>
-                        <i class="fas fa-user-circle me-2 text-muted"></i>{{ u.username }}
-                        {% if u.id == session.get('user_id') %}
-                        <span class="badge bg-primary ms-1" style="font-size:.7rem;">Dig</span>
-                        {% endif %}
+                    <td style="padding-left:1.25rem;">
+                        <div class="d-flex align-items-center gap-2">
+                            <div style="width:30px;height:30px;border-radius:50%;background:#dce6f5;color:#214786;display:flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:700;flex-shrink:0;">
+                                {{ u.username[0]|upper }}
+                            </div>
+                            <div>
+                                <div style="font-weight:500;font-size:.88rem;">{{ u.username }}</div>
+                                {% if u.id == session.get('user_id') %}
+                                <span style="font-size:.68rem;color:#214786;font-weight:600;">Dig</span>
+                                {% endif %}
+                            </div>
+                        </div>
                     </td>
                     <td>
                         {% if u.is_admin %}
-                        <span class="role-pill admin"><i class="fas fa-shield-alt" style="font-size:.65rem;"></i>Administrator</span>
+                        <span class="role-pill admin"><i class="fas fa-shield-alt" style="font-size:.6rem;"></i>Admin</span>
                         {% elif u.sales_only %}
                         <span class="role-pill salesonly">Kun salg</span>
                         {% elif u.budget_only %}
                         <span class="role-pill budgetonly">Kun økonomi</span>
-                        {% elif u.can_access_sales_chatbot or u.can_access_budget_agent %}
-                        <span class="role-pill sales">Platformbruger</span>
+                        {% elif u.agents_only %}
+                        <span class="role-pill agentsonly"><i class="fas fa-robot" style="font-size:.6rem;"></i>Kun agenter</span>
+                        {% elif u.can_access_sales_chatbot or u.can_access_budget_agent or u.can_access_master_agent %}
+                        <span class="role-pill platform">Platformbruger</span>
                         {% else %}
                         <span class="role-pill user">Bruger</span>
                         {% endif %}
                     </td>
+
+                    <!-- Salgs Agent -->
                     <td>
                         {% if u.is_admin %}
-                        <span class="access-pill on-admin"><i class="fas fa-check" style="font-size:.65rem;"></i>Altid</span>
+                        <span class="access-pill on-admin"><i class="fas fa-check" style="font-size:.6rem;"></i>Altid</span>
                         {% else %}
                         <form method="POST" action="{{ url_for('admin_toggle_sales_chatbot', user_id=u.id) }}" class="d-inline">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             {% if u.sales_only %}
                             <button type="submit" class="access-pill lock" title="Klik for at fjerne adgang">
-                                <i class="fas fa-lock" style="font-size:.65rem;"></i>Kun salg
+                                <i class="fas fa-lock" style="font-size:.6rem;"></i>Kun salg
                             </button>
                             {% elif u.can_access_sales_chatbot %}
-                            <button type="submit" class="access-pill on-sales" title="Klik for at ændre">
-                                <i class="fas fa-check" style="font-size:.65rem;"></i>Adgang
+                            <button type="submit" class="access-pill on" title="Klik for at ændre">
+                                <i class="fas fa-check" style="font-size:.6rem;"></i>Adgang
                             </button>
                             {% else %}
                             <button type="submit" class="access-pill off" title="Klik for at aktivere">
-                                —&nbsp;Ingen
+                                — Ingen
                             </button>
                             {% endif %}
                         </form>
                         {% endif %}
                     </td>
+
+                    <!-- Budget Agent -->
                     <td>
                         {% if u.is_admin %}
-                        <span class="access-pill on-admin"><i class="fas fa-check" style="font-size:.65rem;"></i>Altid</span>
+                        <span class="access-pill on-admin"><i class="fas fa-check" style="font-size:.6rem;"></i>Altid</span>
                         {% else %}
                         <form method="POST" action="{{ url_for('admin_toggle_budget_agent', user_id=u.id) }}" class="d-inline">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             {% if u.budget_only %}
                             <button type="submit" class="access-pill lock" title="Klik for at fjerne adgang">
-                                <i class="fas fa-lock" style="font-size:.65rem;"></i>Kun økonomi
+                                <i class="fas fa-lock" style="font-size:.6rem;"></i>Kun økonomi
                             </button>
                             {% elif u.can_access_budget_agent %}
-                            <button type="submit" class="access-pill on-budget" title="Klik for at ændre">
-                                <i class="fas fa-check" style="font-size:.65rem;"></i>Adgang
+                            <button type="submit" class="access-pill on" title="Klik for at ændre">
+                                <i class="fas fa-check" style="font-size:.6rem;"></i>Adgang
                             </button>
                             {% else %}
                             <button type="submit" class="access-pill off" title="Klik for at aktivere">
-                                —&nbsp;Ingen
+                                — Ingen
                             </button>
                             {% endif %}
                         </form>
                         {% endif %}
                     </td>
-                    <td class="text-muted" style="font-size:.85rem;">{{ u.created_at|danish_date }}</td>
+
+                    <!-- Master Agent -->
+                    <td>
+                        {% if u.is_admin %}
+                        <span class="access-pill on-admin"><i class="fas fa-check" style="font-size:.6rem;"></i>Altid</span>
+                        {% else %}
+                        <form method="POST" action="{{ url_for('admin_toggle_master_agent', user_id=u.id) }}" class="d-inline">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            {% if u.can_access_master_agent %}
+                            <button type="submit" class="access-pill on" title="Klik for at fjerne adgang">
+                                <i class="fas fa-check" style="font-size:.6rem;"></i>Adgang
+                            </button>
+                            {% else %}
+                            <button type="submit" class="access-pill off" title="Klik for at aktivere">
+                                — Ingen
+                            </button>
+                            {% endif %}
+                        </form>
+                        {% endif %}
+                    </td>
+
+                    <td class="text-muted" style="font-size:.82rem;">{{ u.created_at|danish_date }}</td>
                     <td>
                         <div class="d-flex gap-1 justify-content-end">
                             <button class="btn btn-sm btn-outline-secondary"
                                     data-bs-toggle="modal"
-                                    data-bs-target="#resetPwModal{{ u.id }}">
-                                <i class="fas fa-key"></i> Nulstil adgangskode
+                                    data-bs-target="#resetPwModal{{ u.id }}"
+                                    title="Nulstil adgangskode">
+                                <i class="fas fa-key"></i>
                             </button>
                             {% if u.id != session.get('user_id') %}
                             <form method="POST" action="{{ url_for('admin_delete_user', user_id=u.id) }}"
                                   onsubmit="return confirm('Slet bruger {{ u.username }}?')">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                <button type="submit" class="btn btn-sm btn-outline-danger">
+                                <button type="submit" class="btn btn-sm btn-outline-danger" title="Slet bruger">
                                     <i class="fas fa-trash"></i>
                                 </button>
                             </form>
@@ -251,28 +302,35 @@
 
 <!-- ── Add User Modal ── -->
 <div class="modal fade" id="addUserModal" tabindex="-1">
-    <div class="modal-dialog">
+    <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
             <form method="POST" action="{{ url_for('admin_add_user') }}" id="addUserForm">
                 {{ form.hidden_tag() }}
                 <!-- Hidden fields driven by JS -->
                 {{ form.can_access_sales_chatbot(id='f_sales_access', style='display:none') }}
                 {{ form.sales_only(id='f_sales_only', style='display:none') }}
+                {{ form.can_access_budget_agent(id='f_budget_access', style='display:none') }}
+                {{ form.budget_only(id='f_budget_only', style='display:none') }}
+                {{ form.can_access_master_agent(id='f_master_access', style='display:none') }}
+                {{ form.agents_only(id='f_agents_only', style='display:none') }}
 
-                <div class="modal-header border-0 pb-0">
-                    <h5 class="modal-title">Opret bruger</h5>
+                <div class="modal-header border-0 pb-0 pt-4 px-4">
+                    <h5 class="modal-title fw-700" style="font-size:1.1rem;">Opret bruger</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
-                <div class="modal-body pt-2">
+
+                <div class="modal-body px-4 pb-0">
 
                     <!-- Credentials -->
-                    <div class="mb-3">
-                        <label class="form-label fw-500">Brugernavn</label>
-                        {{ form.username(class='form-control') }}
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label fw-500">Adgangskode</label>
-                        {{ form.password(class='form-control') }}
+                    <div class="row g-3 mb-1">
+                        <div class="col-12">
+                            <label class="form-label fw-600" style="font-size:.83rem;">Brugernavn</label>
+                            {{ form.username(class='form-control form-control-sm') }}
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label fw-600" style="font-size:.83rem;">Adgangskode</label>
+                            {{ form.password(class='form-control form-control-sm') }}
+                        </div>
                     </div>
 
                     <!-- Systemrettigheder -->
@@ -281,10 +339,20 @@
                         <div class="perm-card" id="adminCard">
                             <label>
                                 {{ form.is_admin(class='form-check-input') }}
-                                <span class="perm-icon admin"><i class="fas fa-shield-alt"></i></span>
+                                <span class="perm-icon dark"><i class="fas fa-shield-alt"></i></span>
                                 <span class="perm-text">
                                     <span class="perm-name">Administrator</span>
-                                    <span class="perm-desc">Fuld adgang til hele platformen inkl. alle agenter og brugeradministration</span>
+                                    <span class="perm-desc">Fuld adgang inkl. brugeradministration og alle agenter</span>
+                                </span>
+                            </label>
+                        </div>
+                        <div class="perm-card" id="agentsOnlyCard">
+                            <label>
+                                <input type="checkbox" class="form-check-input" id="agentsOnlyCheckbox">
+                                <span class="perm-icon" style="background:#e0f2fe;color:#0369a1;"><i class="fas fa-robot"></i></span>
+                                <span class="perm-text">
+                                    <span class="perm-name">Kun agenter</span>
+                                    <span class="perm-desc">Begrænset til agenter – ingen dashboard, chatbot eller vidensbase</span>
                                 </span>
                             </label>
                         </div>
@@ -293,49 +361,58 @@
                     <!-- Agentadgang -->
                     <div class="perm-section">
                         <div class="perm-section-title">Agentadgang</div>
-                        <div class="d-flex gap-2 mb-2">
-                            <button type="button" class="sales-level-btn" id="fullAccessBtn" style="flex:none;padding:.35rem .9rem;">
-                                <i class="fas fa-unlock me-1" style="font-size:.7rem;"></i>Fuld adgang til platformen
-                            </button>
+
+                        <!-- Master Agent -->
+                        <div class="perm-card" id="masterCard">
+                            <div style="display:flex;align-items:center;gap:.65rem;">
+                                <span class="perm-icon"><i class="fas fa-layer-group"></i></span>
+                                <span class="perm-text">
+                                    <span class="perm-name">Master Agent</span>
+                                    <span class="perm-desc">Samlet agent med adgang til alle datakilder</span>
+                                </span>
+                            </div>
+                            <div class="agent-toggle" id="masterLevelBtns">
+                                <button type="button" class="agent-btn selected" data-level="none">Ingen adgang</button>
+                                <button type="button" class="agent-btn" data-level="full">Adgang</button>
+                            </div>
                         </div>
 
-                        <!-- Sales -->
+                        <!-- Salgs Agent -->
                         <div class="perm-card" id="salesCard">
-                            <div style="display:flex;align-items:center;gap:.6rem;">
-                                <span class="perm-icon sales"><i class="fas fa-chart-bar"></i></span>
+                            <div style="display:flex;align-items:center;gap:.65rem;">
+                                <span class="perm-icon"><i class="fas fa-chart-bar"></i></span>
                                 <span class="perm-text">
-                                    <span class="perm-name">Salgs-assistent</span>
+                                    <span class="perm-name">Salgs Agent</span>
                                     <span class="perm-desc">Adgang til salgsdata og omsætningsanalyser</span>
                                 </span>
                             </div>
-                            <div class="sales-level mt-2" id="salesLevelBtns">
-                                <button type="button" class="sales-level-btn selected" data-level="none">Ingen adgang</button>
-                                <button type="button" class="sales-level-btn" data-level="only">Kun salg</button>
+                            <div class="agent-toggle" id="salesLevelBtns">
+                                <button type="button" class="agent-btn selected" data-level="none">Ingen adgang</button>
+                                <button type="button" class="agent-btn" data-level="full">Adgang</button>
                             </div>
                         </div>
 
-                        <!-- Budget -->
+                        <!-- Budget Agent -->
                         <div class="perm-card" id="budgetCard">
-                            <div style="display:flex;align-items:center;gap:.6rem;">
-                                <span class="perm-icon budget"><i class="fas fa-balance-scale"></i></span>
+                            <div style="display:flex;align-items:center;gap:.65rem;">
+                                <span class="perm-icon"><i class="fas fa-balance-scale"></i></span>
                                 <span class="perm-text">
-                                    <span class="perm-name">Budget-assistent</span>
-                                    <span class="perm-desc">Adgang til budgetopfølgning inkl. løn- og gagedata</span>
+                                    <span class="perm-name">Budget Agent</span>
+                                    <span class="perm-desc">Adgang til budgetopfølgning og regnskabsdata</span>
                                 </span>
                             </div>
-                            {{ form.can_access_budget_agent(id='f_budget_access', style='display:none') }}
-                            {{ form.budget_only(id='f_budget_only', style='display:none') }}
-                            <div class="sales-level mt-2" id="budgetLevelBtns">
-                                <button type="button" class="sales-level-btn selected" data-level="none">Ingen adgang</button>
-                                <button type="button" class="sales-level-btn" data-level="only">Kun økonomi</button>
+                            <div class="agent-toggle" id="budgetLevelBtns">
+                                <button type="button" class="agent-btn selected" data-level="none">Ingen adgang</button>
+                                <button type="button" class="agent-btn" data-level="full">Adgang</button>
                             </div>
                         </div>
-                    </div>
 
+                    </div>
                 </div>
-                <div class="modal-footer border-0 pt-0">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuller</button>
-                    <button type="submit" class="btn btn-primary">Opret bruger</button>
+
+                <div class="modal-footer border-0 px-4 pb-4 pt-3 gap-2">
+                    <button type="button" class="btn btn-outline-secondary btn-sm px-3" data-bs-dismiss="modal">Annuller</button>
+                    <button type="submit" class="btn btn-primary btn-sm px-4">Opret bruger</button>
                 </div>
             </form>
         </div>
@@ -345,23 +422,24 @@
 <!-- ── Reset Password Modals ── -->
 {% for u in users %}
 <div class="modal fade" id="resetPwModal{{ u.id }}" tabindex="-1">
-    <div class="modal-dialog">
+    <div class="modal-dialog modal-dialog-centered" style="max-width:400px;">
         <div class="modal-content">
             <form method="POST" action="{{ url_for('admin_reset_password', user_id=u.id) }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <div class="modal-header">
-                    <h5 class="modal-title">Nulstil adgangskode for {{ u.username }}</h5>
+                <div class="modal-header border-0 pb-0">
+                    <h5 class="modal-title" style="font-size:1rem;">Nulstil adgangskode</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
-                <div class="modal-body">
-                    <div class="mb-3">
-                        <label class="form-label">Ny adgangskode</label>
-                        <input type="password" name="new_password" class="form-control" required>
+                <div class="modal-body pb-0">
+                    <p class="text-muted mb-3" style="font-size:.83rem;">Bruger: <strong>{{ u.username }}</strong></p>
+                    <div class="mb-2">
+                        <label class="form-label fw-600" style="font-size:.83rem;">Ny adgangskode</label>
+                        <input type="password" name="new_password" class="form-control form-control-sm" required>
                     </div>
                 </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuller</button>
-                    <button type="submit" class="btn btn-primary">Gem ny adgangskode</button>
+                <div class="modal-footer border-0 gap-2">
+                    <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Annuller</button>
+                    <button type="submit" class="btn btn-primary btn-sm px-3">Gem</button>
                 </div>
             </form>
         </div>
@@ -376,23 +454,27 @@ document.addEventListener('DOMContentLoaded', function () {
     const salesOnly    = document.getElementById('f_sales_only');
     const budgetAccess = document.getElementById('f_budget_access');
     const budgetOnly   = document.getElementById('f_budget_only');
+    const masterAccess = document.getElementById('f_master_access');
+    const agentsOnlyField = document.getElementById('f_agents_only');
 
-    const salesBtns  = document.querySelectorAll('#salesLevelBtns .sales-level-btn');
-    const budgetBtns = document.querySelectorAll('#budgetLevelBtns .sales-level-btn');
-    const fullBtn    = document.getElementById('fullAccessBtn');
+    const salesBtns  = document.querySelectorAll('#salesLevelBtns .agent-btn');
+    const budgetBtns = document.querySelectorAll('#budgetLevelBtns .agent-btn');
+    const masterBtns = document.querySelectorAll('#masterLevelBtns .agent-btn');
 
-    // 'full' = no button selected on the agent card (full access via top button)
-    // 'none' = "Ingen adgang" selected
-    // 'only' = "Kun X" selected
     let salesState  = 'none';
     let budgetState = 'none';
+    let masterState = 'none';
+
+    function setCardActive(cardId, active) {
+        document.getElementById(cardId).classList.toggle('active-card', active);
+    }
 
     function applySalesLevel(level) {
         salesState = level;
         salesBtns.forEach(b => b.classList.toggle('selected', b.dataset.level === level));
         salesAccess.checked = (level === 'full' || level === 'only');
         salesOnly.checked   = (level === 'only');
-        if (level !== 'full') fullBtn.classList.remove('selected');
+        setCardActive('salesCard', level !== 'none');
     }
 
     function applyBudgetLevel(level) {
@@ -400,34 +482,53 @@ document.addEventListener('DOMContentLoaded', function () {
         budgetBtns.forEach(b => b.classList.toggle('selected', b.dataset.level === level));
         budgetAccess.checked = (level === 'full' || level === 'only');
         budgetOnly.checked   = (level === 'only');
-        if (level !== 'full') fullBtn.classList.remove('selected');
+        setCardActive('budgetCard', level !== 'none');
     }
 
-    function checkFullActive() {
-        if (salesState === 'full' && budgetState === 'full') {
-            fullBtn.classList.add('selected');
-        }
+    function applyMasterLevel(level) {
+        masterState = level;
+        masterBtns.forEach(b => b.classList.toggle('selected', b.dataset.level === level));
+        masterAccess.checked = (level === 'full');
+        setCardActive('masterCard', level !== 'none');
     }
 
-    salesBtns.forEach(btn => btn.addEventListener('click', () => {
-        applySalesLevel(btn.dataset.level);
-    }));
-    budgetBtns.forEach(btn => btn.addEventListener('click', () => {
-        applyBudgetLevel(btn.dataset.level);
-    }));
+    salesBtns.forEach(btn  => btn.addEventListener('click',  () => applySalesLevel(btn.dataset.level)));
+    budgetBtns.forEach(btn => btn.addEventListener('click',  () => applyBudgetLevel(btn.dataset.level)));
+    masterBtns.forEach(btn => btn.addEventListener('click',  () => applyMasterLevel(btn.dataset.level)));
 
-    fullBtn.addEventListener('click', () => {
-        applySalesLevel('full');
-        applyBudgetLevel('full');
-        fullBtn.classList.add('selected');
-    });
+    // Admin checkbox: highlight card
+    const adminCheckbox = document.querySelector('#adminCard input[type=checkbox]');
+    if (adminCheckbox) {
+        adminCheckbox.addEventListener('change', () => {
+            setCardActive('adminCard', adminCheckbox.checked);
+        });
+    }
+
+    // Kun agenter checkbox: highlight card + sync hidden field + auto-select all agents
+    const agentsOnlyCheckbox = document.getElementById('agentsOnlyCheckbox');
+    if (agentsOnlyCheckbox) {
+        agentsOnlyCheckbox.addEventListener('change', () => {
+            agentsOnlyField.checked = agentsOnlyCheckbox.checked;
+            setCardActive('agentsOnlyCard', agentsOnlyCheckbox.checked);
+            if (agentsOnlyCheckbox.checked) {
+                applyMasterLevel('full');
+                applySalesLevel('full');
+                applyBudgetLevel('full');
+            }
+        });
+    }
 
     document.getElementById('addUserModal').addEventListener('hidden.bs.modal', function () {
         document.getElementById('addUserForm').reset();
-        salesState = 'none'; budgetState = 'none';
+        salesState = 'none'; budgetState = 'none'; masterState = 'none';
         salesBtns.forEach(b  => b.classList.toggle('selected', b.dataset.level === 'none'));
         budgetBtns.forEach(b => b.classList.toggle('selected', b.dataset.level === 'none'));
-        fullBtn.classList.remove('selected');
+        masterBtns.forEach(b => b.classList.toggle('selected', b.dataset.level === 'none'));
+        if (agentsOnlyCheckbox) agentsOnlyCheckbox.checked = false;
+        if (agentsOnlyField) agentsOnlyField.checked = false;
+        ['salesCard','budgetCard','masterCard','adminCard','agentsOnlyCard'].forEach(id => {
+            document.getElementById(id).classList.remove('active-card');
+        });
     });
 });
 </script>

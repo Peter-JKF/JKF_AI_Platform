@@ -25,11 +25,15 @@ import pytz
 import requests
 from flask import (
     Flask, render_template, request, redirect, url_for,
-    flash, session, jsonify, Response, stream_with_context,
+    flash, session, jsonify, Response, stream_with_context, send_file,
 )
 from flask_cors import CORS
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from flask_wtf import FlaskForm
 from flask_wtf.csrf import CSRFProtect
+from werkzeug.security import generate_password_hash, check_password_hash as wz_check_password_hash
+from werkzeug.utils import secure_filename
 from wtforms import StringField, PasswordField, SubmitField, BooleanField, TextAreaField, SelectField
 from wtforms.validators import DataRequired
 from sqlalchemy import func, text, desc, case
@@ -60,6 +64,12 @@ CORS(app, resources={r"/chat*": {"origins": "*"}, r"/init_thread": {"origins": "
                      r"/static/*": {"origins": "*"}})
 db.init_app(app)
 csrf = CSRFProtect(app)
+limiter = Limiter(get_remote_address, app=app, default_limits=[], storage_uri="memory://")
+
+if app.config['SECRET_KEY'] == 'jkf-platform-secret-change-in-production':
+    logging.getLogger(__name__).critical(
+        "SECURITY: Default FLASK_SECRET_KEY is in use — set a strong random key in .env before deploying!"
+    )
 
 # Exempt chatbot API routes from CSRF (they're called from embedded widgets)
 @csrf.exempt
@@ -138,13 +148,22 @@ class User(db.Model):
     sales_only = db.Column(db.Boolean, default=False)
     can_access_budget_agent = db.Column(db.Boolean, default=False)
     budget_only = db.Column(db.Boolean, default=False)
+    can_access_master_agent = db.Column(db.Boolean, default=False)
+    agents_only = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     def set_password(self, password):
-        self.password_hash = hashlib.sha256(password.encode()).hexdigest()
+        self.password_hash = generate_password_hash(password)
 
     def check_password(self, password):
-        return self.password_hash == hashlib.sha256(password.encode()).hexdigest()
+        stored = self.password_hash or ''
+        # Seamlessly migrate legacy SHA-256 hashes (64 hex chars, no prefix) to scrypt
+        if len(stored) == 64 and re.fullmatch(r'[0-9a-f]{64}', stored):
+            if stored == hashlib.sha256(password.encode()).hexdigest():
+                self.set_password(password)  # upgrade in-place; login route commits
+                return True
+            return False
+        return wz_check_password_hash(stored, password)
 
 
 class Message(db.Model):
@@ -340,6 +359,32 @@ class BudgetMessage(db.Model):
     created_at      = db.Column(db.DateTime, default=datetime.utcnow)
 
 
+class MasterConversation(db.Model):
+    """Top-level record for a master-agent conversation."""
+    __tablename__ = 'master_conversations'
+    id         = db.Column(db.Integer, primary_key=True)
+    user_id    = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    title      = db.Column(db.String(255), nullable=False, default='Ny samtale')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user     = db.relationship('User', foreign_keys=[user_id])
+    messages = db.relationship('MasterMessage', backref='conversation',
+                               cascade='all, delete-orphan', order_by='MasterMessage.id')
+
+
+class MasterMessage(db.Model):
+    """A single turn (user or assistant) within a MasterConversation."""
+    __tablename__ = 'master_messages'
+    id              = db.Column(db.Integer, primary_key=True)
+    conversation_id = db.Column(db.Integer, db.ForeignKey('master_conversations.id'),
+                                nullable=False, index=True)
+    role            = db.Column(db.String(20), nullable=False)   # 'user' | 'assistant'
+    content         = db.Column(db.Text, nullable=False)
+    tools_used      = db.Column(db.Text, default='[]')            # JSON list of tool names
+    created_at      = db.Column(db.DateTime, default=datetime.utcnow)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Init DB
 # ─────────────────────────────────────────────────────────────────────────────
@@ -356,6 +401,10 @@ def init_db():
              "Migrated: added can_access_budget_agent column to users table"),
             ("ALTER TABLE users ADD COLUMN budget_only BOOLEAN DEFAULT 0 NOT NULL",
              "Migrated: added budget_only column to users table"),
+            ("ALTER TABLE users ADD COLUMN can_access_master_agent BOOLEAN DEFAULT 0 NOT NULL",
+             "Migrated: added can_access_master_agent column to users table"),
+            ("ALTER TABLE users ADD COLUMN agents_only BOOLEAN DEFAULT 0 NOT NULL",
+             "Migrated: added agents_only column to users table"),
         ]:
             with db.engine.connect() as conn:
                 try:
@@ -505,6 +554,14 @@ def login_required(f):
                 return redirect(url_for('budget_agent'))
             if user.sales_only:
                 return redirect(url_for('sales_chatbot'))
+            if user.agents_only:
+                if user.can_access_master_agent:
+                    return redirect(url_for('master_agent'))
+                if user.can_access_sales_chatbot:
+                    return redirect(url_for('sales_chatbot'))
+                if user.can_access_budget_agent:
+                    return redirect(url_for('budget_agent'))
+                # No agent assigned yet — fall through to avoid redirect loop
         return f(*args, **kwargs)
     return decorated
 
@@ -546,6 +603,20 @@ def budget_agent_required(f):
         user = User.query.get(session['user_id'])
         if not user or (not user.can_access_budget_agent and not user.is_admin):
             flash('Du har ikke adgang til budget-assistenten.', 'danger')
+            return redirect(url_for('dashboard'))
+        return f(*args, **kwargs)
+    return decorated
+
+
+def master_agent_required(f):
+    from functools import wraps
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if 'user_id' not in session:
+            return redirect(url_for('login'))
+        user = User.query.get(session['user_id'])
+        if not user or (not user.can_access_master_agent and not user.is_admin):
+            flash('Du har ikke adgang til Master Agenten.', 'danger')
             return redirect(url_for('dashboard'))
         return f(*args, **kwargs)
     return decorated
@@ -607,6 +678,8 @@ class UserForm(FlaskForm):
     sales_only = BooleanField('Kun salgs-assistent')
     can_access_budget_agent = BooleanField('Budget-assistent adgang')
     budget_only = BooleanField('Kun budget-assistent')
+    can_access_master_agent = BooleanField('Master Agent adgang')
+    agents_only = BooleanField('Kun agenter')
     submit = SubmitField('Gem bruger')
 
 
@@ -2771,6 +2844,7 @@ def chatbot_config():
 # Auth routes
 # ─────────────────────────────────────────────────────────────────────────────
 @app.route('/login', methods=['GET', 'POST'])
+@limiter.limit("10 per minute")
 def login():
     if 'user_id' in session:
         return redirect(url_for('dashboard'))
@@ -2778,14 +2852,26 @@ def login():
     if form.validate_on_submit():
         user = User.query.filter_by(username=form.username.data).first()
         if user and user.check_password(form.password.data):
+            db.session.commit()  # persist any in-place password hash upgrade
             session['user_id'] = user.id
             flash(f'Velkommen, {user.username}!', 'success')
-            next_url = request.args.get('next')
+            next_url = request.args.get('next', '')
+            # Reject absolute URLs to prevent open redirect
+            parsed_next = urlparse(next_url)
+            if parsed_next.netloc or parsed_next.scheme:
+                next_url = ''
             if not user.is_admin:
                 if user.budget_only:
                     return redirect(url_for('budget_agent'))
                 if user.sales_only:
                     return redirect(url_for('sales_chatbot'))
+                if user.agents_only:
+                    if user.can_access_master_agent:
+                        return redirect(url_for('master_agent'))
+                    if user.can_access_sales_chatbot:
+                        return redirect(url_for('sales_chatbot'))
+                    if user.can_access_budget_agent:
+                        return redirect(url_for('budget_agent'))
             return redirect(next_url or url_for('dashboard'))
         flash('Forkert brugernavn eller adgangskode.', 'danger')
     return render_template('login.html', form=form, hide_header=True)
@@ -3718,6 +3804,12 @@ def admin_add_user():
     if form.validate_on_submit():
         if User.query.filter_by(username=form.username.data).first():
             flash('Brugernavnet er allerede i brug.', 'danger')
+        elif form.agents_only.data and not (
+            form.can_access_master_agent.data or
+            form.can_access_sales_chatbot.data or
+            form.can_access_budget_agent.data
+        ):
+            flash('En "Kun agenter"-bruger skal have adgang til mindst én agent.', 'danger')
         else:
             sales_only  = form.sales_only.data
             budget_only = form.budget_only.data
@@ -3728,6 +3820,8 @@ def admin_add_user():
                 sales_only=sales_only,
                 can_access_budget_agent=form.can_access_budget_agent.data or budget_only,
                 budget_only=budget_only,
+                can_access_master_agent=form.can_access_master_agent.data,
+                agents_only=form.agents_only.data,
             )
             user.set_password(form.password.data)
             db.session.add(user)
@@ -3806,6 +3900,17 @@ def admin_toggle_budget_agent(user_id):
         label = 'Ingen adgang'
     db.session.commit()
     flash(f'Budget-adgang for {user.username} sat til: {label}.', 'success')
+    return redirect(url_for('admin'))
+
+
+@app.route('/admin/users/<int:user_id>/toggle-master-agent', methods=['POST'])
+@admin_required
+def admin_toggle_master_agent(user_id):
+    user = User.query.get_or_404(user_id)
+    user.can_access_master_agent = not user.can_access_master_agent
+    label = 'Adgang' if user.can_access_master_agent else 'Ingen adgang'
+    db.session.commit()
+    flash(f'Master Agent-adgang for {user.username} sat til: {label}.', 'success')
     return redirect(url_for('admin'))
 
 
@@ -5128,27 +5233,31 @@ def api_upload_document():
     if not file or file.filename == '':
         return jsonify({'success': False, 'message': 'Ingen fil valgt'}), 400
 
-    if not _allowed_file(file.filename):
-        return jsonify({'success': False, 'message': 'Filtype ikke understøttet (kun PDF og TXT)',
-                        'name': file.filename}), 400
+    safe_name = secure_filename(file.filename)
+    if not safe_name:
+        return jsonify({'success': False, 'message': 'Ugyldigt filnavn'}), 400
 
-    existing = Document.query.filter_by(original_name=file.filename, is_active=True).first()
+    if not _allowed_file(safe_name):
+        return jsonify({'success': False, 'message': 'Filtype ikke understøttet (kun PDF og TXT)',
+                        'name': safe_name}), 400
+
+    existing = Document.query.filter_by(original_name=safe_name, is_active=True).first()
     if existing:
         return jsonify({'success': False,
-                        'message': f'En fil med navnet "{file.filename}" findes allerede i vidensbasen.',
-                        'name': file.filename}), 409
+                        'message': f'En fil med navnet "{safe_name}" findes allerede i vidensbasen.',
+                        'name': safe_name}), 409
 
     upload_folder = app.config.get('UPLOAD_FOLDER', 'uploads')
     os.makedirs(upload_folder, exist_ok=True)
 
-    ext = file.filename.rsplit('.', 1)[1].lower()
+    ext = safe_name.rsplit('.', 1)[1].lower()
     stored = f"{uuid.uuid4().hex}.{ext}"
     filepath = os.path.join(upload_folder, stored)
     file.save(filepath)
     size = os.path.getsize(filepath)
 
     doc = Document(
-        original_name=file.filename,
+        original_name=safe_name,
         stored_name=stored,
         file_type=ext,
         file_size=size,
@@ -5437,6 +5546,7 @@ def api_sales_conversation_detail(conv_id):
         'id': conv.id,
         'title': conv.title,
         'messages': [{
+            'id': m.id,
             'role': m.role,
             'content': m.content,
             'sql': m.sql_query,
@@ -5453,6 +5563,172 @@ def api_sales_conversation_delete(conv_id):
     db.session.delete(conv)
     db.session.commit()
     return jsonify({'ok': True})
+
+
+def _pdf_html(title, agent_name, exported_at, incl_user, messages_html):
+    incl_label = 'inkluderet' if incl_user else 'ikke vist'
+    return f'''<!DOCTYPE html>
+<html lang="da">
+<head>
+<meta charset="UTF-8">
+<title>{title} – JKF</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+  *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{ font-family: "Inter", "Segoe UI", Arial, sans-serif; font-size: 12.5px; line-height: 1.65; color: #1e293b; background: #fff; padding: 0 0 40px; }}
+  .page-header {{ background: linear-gradient(135deg, #1a3a72 0%, #214786 60%, #2d5fa8 100%); color: #fff; padding: 28px 44px 22px; display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }}
+  .ph-left {{ display: flex; flex-direction: column; gap: 6px; }}
+  .ph-brand {{ font-size: 11px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; opacity: .75; }}
+  .ph-title {{ font-size: 20px; font-weight: 700; line-height: 1.25; max-width: 560px; }}
+  .ph-right {{ text-align: right; font-size: 11px; opacity: .85; line-height: 1.9; white-space: nowrap; }}
+  .ph-right strong {{ font-weight: 600; opacity: 1; }}
+  .sub-bar {{ background: #f0f4fb; border-bottom: 1px solid #d4dff5; padding: 9px 44px; font-size: 11px; color: #4a5f8a; display: flex; gap: 24px; }}
+  .sub-bar span {{ display: flex; align-items: center; gap: 5px; }}
+  .content {{ padding: 20px 32px; }}
+  .turn {{ margin-bottom: 26px; }}
+  .turn-label {{ margin-bottom: 6px; }}
+  .label-chip {{ display: inline-block; padding: 2px 9px; border-radius: 20px; font-size: 10px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }}
+  .user-chip  {{ background: #dbeafe; color: #1d4ed8; }}
+  .asst-chip  {{ background: #dcfce7; color: #15803d; }}
+  .bubble {{ border-radius: 10px; padding: 14px 18px; }}
+  .user-bubble {{ background: #eff6ff; border-left: 3px solid #3b82f6; color: #1e3a5f; }}
+  .asst-bubble {{ background: #f8fafc; color: #1e293b; }}
+  .asst-bubble p  {{ margin-bottom: 6px; }}
+  .asst-bubble p:last-child {{ margin-bottom: 0; }}
+  .asst-bubble h2 {{ font-size: 13px; font-weight: 700; margin: 10px 0 4px; color: #214786; }}
+  .asst-bubble h3 {{ font-size: 12px; font-weight: 600; margin: 8px 0 3px; color: #334155; }}
+  .asst-bubble ul {{ padding-left: 18px; margin: 4px 0 6px; }}
+  .asst-bubble li {{ margin-bottom: 3px; }}
+  .spacer {{ height: 4px; }}
+  .tbl-wrap {{ overflow-x: auto; margin: 10px 0; border-radius: 6px; border: 1px solid #e2e8f0; width: 100%; }}
+  .md-table {{ border-collapse: collapse; width: 100%; font-size: 10px; table-layout: auto; }}
+  .md-table th {{ background: #214786; color: #fff; padding: 5px 7px; text-align: left; font-weight: 600; font-size: 9.5px; letter-spacing: .02em; }}
+  .md-table td {{ padding: 5px 7px; border-bottom: 1px solid #e8eef6; font-size: 10px; }}
+  .md-table tbody tr:last-child td {{ border-bottom: none; }}
+  .md-table tbody tr:nth-child(even) td {{ background: #f5f8ff; }}
+  strong {{ font-weight: 600; }}
+  em      {{ font-style: italic; }}
+  @page {{ margin: 0; size: A4 portrait; }}
+  @media print {{
+    body {{ padding: 0; }}
+    .content {{ padding: 16px 30px; }}
+    .page-header {{ padding: 20px 30px 16px; print-color-adjust: exact; -webkit-print-color-adjust: exact; }}
+    .sub-bar {{ padding: 7px 30px; print-color-adjust: exact; -webkit-print-color-adjust: exact; }}
+    .md-table th {{ print-color-adjust: exact; -webkit-print-color-adjust: exact; }}
+    .tbl-wrap {{ overflow-x: visible; }}
+    .md-table tr {{ page-break-inside: avoid; }}
+  }}
+</style>
+</head>
+<body>
+<div class="page-header">
+  <div class="ph-left">
+    <div class="ph-brand">JKF AI Platform · {agent_name}</div>
+    <div class="ph-title">{title}</div>
+  </div>
+  <div class="ph-right">
+    <strong>Eksporteret</strong><br>{exported_at}
+  </div>
+</div>
+<div class="sub-bar">
+  <span>Bruger-spørgsmål: {incl_label}</span>
+</div>
+<div class="content">
+{messages_html}
+</div>
+</body>
+</html>'''
+
+
+@app.route('/api/sales-conversations/<int:conv_id>/export/pdf')
+@sales_chatbot_required
+def api_sales_conversation_export_pdf(conv_id):
+    import re as _re
+
+    user_id = session.get('user_id')
+    conv = SalesConversation.query.filter_by(id=conv_id, user_id=user_id).first_or_404()
+
+    # Query-param filtering
+    raw_ids   = request.args.get('msg_ids', '')
+    incl_user = request.args.get('include_user', '1') == '1'
+    selected_ids = set(int(x) for x in raw_ids.split(',') if x.strip().isdigit()) if raw_ids else None
+
+    def md_to_html(text):
+        text = _re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
+        text = _re.sub(r'\*(.+?)\*',     r'<em>\1</em>',         text)
+        lines = text.split('\n')
+        out, in_table, in_list = [], False, False
+        for line in lines:
+            if line.startswith('|'):
+                cells = [c.strip() for c in line.strip('|').split('|')]
+                if all(set(c) <= set('-:| ') for c in cells):
+                    continue
+                if not in_table:
+                    if in_list: out.append('</ul>'); in_list = False
+                    out.append('<div class="tbl-wrap"><table class="md-table"><thead><tr>')
+                    out.extend(f'<th>{c}</th>' for c in cells)
+                    out.append('</tr></thead><tbody>')
+                    in_table = True
+                else:
+                    out.append('<tr>')
+                    out.extend(f'<td>{c}</td>' for c in cells)
+                    out.append('</tr>')
+            else:
+                if in_table: out.append('</tbody></table></div>'); in_table = False
+                stripped = line.strip()
+                if stripped.startswith('- ') or stripped.startswith('* '):
+                    if not in_list: out.append('<ul>'); in_list = True
+                    out.append(f'<li>{stripped[2:]}</li>')
+                elif stripped.startswith('### '):
+                    if in_list: out.append('</ul>'); in_list = False
+                    out.append(f'<h3>{stripped[4:]}</h3>')
+                elif stripped.startswith('## '):
+                    if in_list: out.append('</ul>'); in_list = False
+                    out.append(f'<h2>{stripped[3:]}</h2>')
+                elif stripped == '':
+                    if in_list: out.append('</ul>'); in_list = False
+                    out.append('<div class="spacer"></div>')
+                else:
+                    if in_list: out.append('</ul>'); in_list = False
+                    out.append(f'<p>{line}</p>')
+        if in_table: out.append('</tbody></table></div>')
+        if in_list:  out.append('</ul>')
+        return '\n'.join(out)
+
+    messages_html = ''
+    turn_num = 0
+    all_messages = list(conv.messages)
+    for i, msg in enumerate(all_messages):
+        if msg.role == 'user':
+            if not incl_user:
+                continue
+            # Only show this question if its paired answer is selected
+            next_asst = next((m for m in all_messages[i+1:] if m.role == 'assistant'), None)
+            if selected_ids is not None and (next_asst is None or next_asst.id not in selected_ids):
+                continue
+            messages_html += f'''
+<div class="turn user-turn">
+  <div class="turn-label"><span class="label-chip user-chip">Spørgsmål</span></div>
+  <div class="bubble user-bubble"><p>{msg.content}</p></div>
+</div>'''
+        else:
+            if selected_ids is not None and msg.id not in selected_ids:
+                continue
+            turn_num += 1
+            content_html = md_to_html(msg.content or '')
+            messages_html += f'''
+<div class="turn assistant-turn">
+  <div class="turn-label"><span class="label-chip asst-chip">Svar {turn_num}</span></div>
+  <div class="bubble asst-bubble">{content_html}</div>
+</div>'''
+
+    _da_months = ['januar','februar','marts','april','maj','juni',
+                  'juli','august','september','oktober','november','december']
+    _now = datetime.utcnow().replace(tzinfo=pytz.utc).astimezone(danish_tz)
+    exported_at = f"{_now.day}. {_da_months[_now.month - 1]} {_now.year} kl. {_now.strftime('%H:%M')}"
+
+    html = _pdf_html(conv.title, 'Salgs-assistent', exported_at, incl_user, messages_html)
+    return html, 200, {'Content-Type': 'text/html; charset=utf-8', 'Content-Disposition': 'inline'}
 
 
 @app.route('/api/sales-chat', methods=['POST'])
@@ -5498,17 +5774,81 @@ def api_sales_chat():
                    if l.split('(')[0].strip().lower() in _ALLOWED_SALES_TABLES]
     schema = '\n'.join(sales_lines) if sales_lines else full_schema
 
+    # ── Customer name resolution ──────────────────────────────────────────────
+    # Extract any customer names the user mentioned, then look up exact matches
+    # in the DB so the SQL generator uses precise names instead of LIKE guesses.
+    # We scan BOTH the current message AND recent user messages from history so
+    # follow-up questions ("vis det for dem") resolve the same customer.
+    customer_context = ''
+    try:
+        recent_user_msgs = [h['content'] for h in history[-8:] if h.get('role') == 'user']
+        extraction_text = '\n'.join(recent_user_msgs + [message])
+        extraction_resp = client.chat.completions.create(
+            model='gpt-5.4-mini',
+            messages=[
+                {
+                    'role': 'system',
+                    'content': (
+                        'Extract company/customer names mentioned across these messages. '
+                        'Return ONLY a JSON array of strings, e.g. ["technor", "camfil"]. '
+                        'Return [] if no customer names are mentioned. '
+                        'Do not include general words like "kunde", "kunden", "top", "largest", "dem", "de".'
+                    ),
+                },
+                {'role': 'user', 'content': extraction_text},
+            ],
+            temperature=0,
+            max_completion_tokens=80,
+        )
+        raw = extraction_resp.choices[0].message.content or '[]'
+        # Strip markdown fences if model wraps in ```json
+        raw = raw.strip().strip('`').removeprefix('json').strip()
+        mentioned = json.loads(raw)
+    except Exception:
+        mentioned = []
+
+    if mentioned:
+        resolved = {}
+        try:
+            conn = get_dw_connection()
+            cursor = conn.cursor()
+            for name in mentioned[:5]:   # cap at 5 names
+                cursor.execute(
+                    "SELECT DISTINCT TOP 10 [KundeNavn] FROM [Salg] "
+                    "WHERE [KundeNavn] LIKE %s ORDER BY [KundeNavn]",
+                    (f'%{name}%',),
+                )
+                rows = cursor.fetchall()
+                if rows:
+                    resolved[name] = [r[0] for r in rows]
+            conn.close()
+        except Exception as e:
+            logger.warning(f'Customer name resolution failed: {e}')
+
+        if resolved:
+            lines = []
+            for mention, matches in resolved.items():
+                exact = ', '.join(f'"{m}"' for m in matches)
+                lines.append(f'  Bruger nævnte "{mention}" → eksakte KundeNavn i databasen: {exact}')
+            customer_context = (
+                '\nKUNDENAVNE-OPSLAG (brug disse eksakte værdier i WHERE-klausulen, IKKE LIKE):\n'
+                + '\n'.join(lines) + '\n'
+            )
+
     sql_system = (
         "Du er en T-SQL ekspert for JKF's SQL Server datawarehouse (SQL Server 2019).\n\n"
         "VIGTIGE TABELLER:\n"
-        "- [Salg]: Primær salgsoversigt – Varenummer, Beskrivelse, Dato (date), KundeNavn, Land, Salgsbeløb (decimal), Rabatbeløb, dækningsbidrag. Brug denne til de fleste salgs- og omsætningsspørgsmål.\n"
+        "- [Salg]: Primær salgsoversigt – Varenummer, Beskrivelse, Varegruppe, Dato (date), KundeNavn, Land, Salgsbeløb (decimal), Rabatbeløb, dækningsbidrag. "
+        "Brug kolonnen [Varegruppe] direkte fra [Salg] til alle spørgsmål om varegrupper – join ALDRIG [Item] for dette formål. "
+        "Brug denne til de fleste salgs- og omsætningsspørgsmål.\n"
         "- [Sales Invoice Header]: Fakturahoveder – [Posting Date], [Sell-to Customer No_], [Bill-to Name], CompanyCode.\n"
         "- [Sales Invoice Line]: Fakturalinjer – Amount, Quantity, [No_] (varenummer), CompanyCode.\n"
         "- [Customer]: Kunder – [No_], Name, [Country_Region Code], [Salesperson Code].\n"
         "- [Item]: Varer – [No_], Description.\n\n"
         "ADGANGSBEGRÆNSNING: Du må KUN forespørge på de ovenstående tabeller. Brug ALDRIG andre tabeller eller views.\n\n"
         "FULDT SKEMA:\n"
-        f"{schema}\n\n"
+        f"{schema}\n"
+        f"{customer_context}\n"
         "OBLIGATORISKE REGLER – følg dem præcist:\n"
         "0. Du har ALTID fuld adgang til databasen med alle data. Svar ALDRIG med forklaringer om manglende data eller hvad du har brug for. "
         "Generér ALTID et SELECT-statement – uanset om spørgsmålet er et opfølgningsspørgsmål eller en ny forespørgsel.\n"
@@ -5629,13 +5969,23 @@ def api_sales_chat():
         logger.error(f'DW query failed: {e}\nSQL was:\n{raw_sql}')
         if '1033' in err_str:
             return jsonify({'error': 'Den genererede SQL indeholder ORDER BY i en subquery uden TOP, som SQL Server ikke tillader. Prøv at omformulere spørgsmålet.'}), 500
-        return jsonify({'error': f'Databasefejl: {err_str}'}), 500
+        return jsonify({'error': 'Databasefejl: forespørgslen kunne ikke udføres. Prøv at omformulere dit spørgsmål.'}), 500
 
     answer_system = (
         "Du er en hjælpsom salgsanalytiker hos JKF. Svar altid på dansk.\n\n"
         "FORMATERINGSREGLER – følg dem præcist:\n"
-        "- Når svaret indeholder tabeldata med flere rækker: brug ALTID en markdown-tabel med pipe-syntaks (|), "
-        "fx:\n| Land | Omsætning 2025 | Vækst |\n|------|--------------|-------|\n| Danmark | 99.414.431 | -5,3% |\n"
+        "- Når svaret indeholder tabeldata med flere rækker: brug ALTID en markdown-tabel med pipe-syntaks (|).\n"
+        "- TABELRETNING – vælg den retning der giver den korteste og bredeste tabel:\n"
+        "  * HORISONTAL (foretrukket): én række per enhed (kunde, varegruppe, land osv.), "
+        "med tidsperioder eller målinger som kolonner. "
+        "Brug dette ved sammenligninger på tværs af år/perioder/metrics, fx:\n"
+        "    | Kunde         | Oms. 2023 | Oms. 2024 | Oms. 2025 | Margin% 2025 |\n"
+        "    |---------------|-----------|-----------|-----------|---------------|\n"
+        "    | Camfil Norge  | 1.200.000 | 980.000   | 1.450.000 | 33,8%        |\n"
+        "  * VERTIKAL: kun når data naturligt har én kolonne med værdier, "
+        "fx en simpel top-10 liste med én metric.\n"
+        "- Aldrig lav en tabel med en 'Periode' eller 'År'-kolonne og én værdi-kolonne – "
+        "det er altid bedre som en horisontal tabel med år som kolonneoverskrifter.\n"
         "- Brug punktopstilling (- eller 1.) til lister og opsummeringer.\n"
         "- Brug **fed** til vigtige tal og nøgleord.\n"
         "- TALLFORMATERINGSKRAV – dette er kritisk:\n"
@@ -5688,6 +6038,7 @@ def api_sales_chat():
         'sql': raw_sql,
         'row_count': row_count,
         'conversation_id': conv.id,
+        'msg_id': assistant_turn.id,
     })
 
 
@@ -5864,6 +6215,7 @@ def api_budget_conversation_detail(conv_id):
         'id': conv.id,
         'title': conv.title,
         'messages': [{
+            'id': m.id,
             'role': m.role,
             'content': m.content,
             'sql': m.sql_query,
@@ -5952,6 +6304,10 @@ def api_budget_chat():
         "1. Returner KUN rå SQL, ingen forklaring, ingen markdown, ingen ```.\n"
         "2. Brug firkantede parenteser om view-navne og kolonner med mellemrum eller specialtegn.\n"
         "2b. Inkluder ALTID [G_L Account No_] i SELECT når [Account Name] er med — kontonummer skal altid fremgå ved siden af kontonavnet.\n"
+        "2c. FILTRERING: brug ALTID WHERE til at filtrere rækker — brug ALDRIG COALESCE i GROUP BY som erstatning for filtrering. "
+        "COALESCE i GROUP BY returnerer alle rækker og maskerer blot NULL-værdier, men filtrerer intet ud. "
+        "Vil du kun have rækker uden afdeling: brug WHERE [Department Name] IS NULL. "
+        "COALESCE må kun bruges i SELECT til at formatere output, f.eks. COALESCE([Department Name], 'Ingen afdeling') AS [Department Name].\n"
         "3. Subquery-aliaser UDEN AS: FROM (SELECT ...) sub — IKKE FROM (SELECT ...) AS sub.\n"
         "4. Kolonne-aliaser bruger AS normalt: SUM(Actual) AS AktuelTotal.\n"
         "5. Brug TOP n (ikke LIMIT) for at begrænse resultater.\n"
@@ -5995,7 +6351,7 @@ def api_budget_chat():
             model='gpt-5.4-mini',
             messages=sql_messages,
             temperature=0,
-            max_completion_tokens=800,
+            max_completion_tokens=1500,
         )
         raw_sql = _extract_sql(sql_resp.choices[0].message.content or '')
     except Exception as e:
@@ -6057,7 +6413,7 @@ def api_budget_chat():
         logger.error(f'Budget query failed: {e}\nSQL was:\n{raw_sql}')
         if '1033' in err_str:
             return jsonify({'error': 'Den genererede SQL indeholder ORDER BY i en subquery uden TOP. Prøv at omformulere spørgsmålet.'}), 500
-        return jsonify({'error': f'Databasefejl: {err_str}'}), 500
+        return jsonify({'error': 'Databasefejl: forespørgslen kunne ikke udføres. Prøv at omformulere dit spørgsmål.'}), 500
 
     answer_system = (
         "Du er en hjælpsom budget-analytiker hos JKF. Svar altid på dansk.\n\n"
@@ -6067,10 +6423,18 @@ def api_budget_chat():
         "3. Evt. sammenligning: er dette anderledes end samme periode sidste år?\n\n"
         "KONTONAVNE OG KONTONUMRE:\n"
         "- Når du omtaler en konto, skriv ALTID kontonummer og navn sammen, f.eks.: **IT-konsulent (6320)**.\n"
-        "- I tabeller: inkluder kolonnen Kontonummer (G_L Account No_) som første kolonne ved siden af Kontonavn.\n"
+        "- I tabeller: inkluder kolonnen Kontonummer når(G_L Account No_) anvendes sammen med Kontonavn.\n"
         "- Nævn aldrig et kontonavn uden kontonummeret i parentes.\n\n"
         "FORMATERINGSREGLER:\n"
         "- Brug markdown-tabel (|) til tabeldata med flere rækker.\n"
+        "- TABELRETNING – vælg den korteste og bredeste form:\n"
+        "  * HORISONTAL (foretrukket): én række per enhed (konto, afdeling), "
+        "perioder/metrics som kolonner. Fx:\n"
+        "    | Konto                | Budget | Actual | Afvigelse |\n"
+        "    |----------------------|--------|--------|-----------|\n"
+        "    | IT-konsulent (6320)  | 50.000 | 62.000 | -12.000   |\n"
+        "  * VERTIKAL: kun ved simple lister med én metric.\n"
+        "- Aldrig én-kolonne tabeller med 'År' og én værdi – brug i stedet år som kolonneoverskrifter.\n"
         "- Brug punktopstilling til lister og opsummeringer.\n"
         "- Brug **fed** til vigtige tal og nøgleord.\n"
         "- TALFORMAT (kritisk): dansk tusindtalsseparator (.), komma som decimaltegn.\n"
@@ -6099,7 +6463,7 @@ def api_budget_chat():
             model='gpt-5.4-mini',
             messages=answer_messages,
             temperature=0.3,
-            max_completion_tokens=3000,
+            max_completion_tokens=6000,
         )
         answer = ans_resp.choices[0].message.content or ''
     except Exception as e:
@@ -6122,6 +6486,665 @@ def api_budget_chat():
         'sql': raw_sql,
         'row_count': row_count,
         'conversation_id': conv.id,
+        'msg_id': assistant_turn.id,
+    })
+
+
+@app.route('/api/budget-conversations/<int:conv_id>/export/pdf')
+@budget_agent_required
+def api_budget_conversation_export_pdf(conv_id):
+    import re as _re
+    user_id = session.get('user_id')
+    conv = BudgetConversation.query.filter_by(id=conv_id, user_id=user_id).first_or_404()
+
+    raw_ids   = request.args.get('msg_ids', '')
+    incl_user = request.args.get('include_user', '1') == '1'
+    selected_ids = set(int(x) for x in raw_ids.split(',') if x.strip().isdigit()) if raw_ids else None
+
+    def md_to_html(text):
+        text = _re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
+        text = _re.sub(r'\*(.+?)\*',     r'<em>\1</em>',         text)
+        lines = text.split('\n')
+        out, in_table, in_list = [], False, False
+        for line in lines:
+            if line.startswith('|'):
+                cells = [c.strip() for c in line.strip('|').split('|')]
+                if all(set(c) <= set('-:| ') for c in cells):
+                    continue
+                if not in_table:
+                    if in_list: out.append('</ul>'); in_list = False
+                    out.append('<div class="tbl-wrap"><table class="md-table"><thead><tr>')
+                    out.extend(f'<th>{c}</th>' for c in cells)
+                    out.append('</tr></thead><tbody>')
+                    in_table = True
+                else:
+                    out.append('<tr>')
+                    out.extend(f'<td>{c}</td>' for c in cells)
+                    out.append('</tr>')
+            else:
+                if in_table: out.append('</tbody></table></div>'); in_table = False
+                stripped = line.strip()
+                if stripped.startswith('- ') or stripped.startswith('* '):
+                    if not in_list: out.append('<ul>'); in_list = True
+                    out.append(f'<li>{stripped[2:]}</li>')
+                elif stripped.startswith('### '):
+                    if in_list: out.append('</ul>'); in_list = False
+                    out.append(f'<h3>{stripped[4:]}</h3>')
+                elif stripped.startswith('## '):
+                    if in_list: out.append('</ul>'); in_list = False
+                    out.append(f'<h2>{stripped[3:]}</h2>')
+                elif stripped == '':
+                    if in_list: out.append('</ul>'); in_list = False
+                    out.append('<div class="spacer"></div>')
+                else:
+                    if in_list: out.append('</ul>'); in_list = False
+                    out.append(f'<p>{line}</p>')
+        if in_table: out.append('</tbody></table></div>')
+        if in_list:  out.append('</ul>')
+        return '\n'.join(out)
+
+    messages_html = ''
+    turn_num = 0
+    all_messages = list(conv.messages)
+    for i, msg in enumerate(all_messages):
+        if msg.role == 'user':
+            if not incl_user:
+                continue
+            next_asst = next((m for m in all_messages[i+1:] if m.role == 'assistant'), None)
+            if selected_ids is not None and (next_asst is None or next_asst.id not in selected_ids):
+                continue
+            messages_html += f'''
+<div class="turn user-turn">
+  <div class="turn-label"><span class="label-chip user-chip">Spørgsmål</span></div>
+  <div class="bubble user-bubble"><p>{msg.content}</p></div>
+</div>'''
+        else:
+            if selected_ids is not None and msg.id not in selected_ids:
+                continue
+            turn_num += 1
+            content_html = md_to_html(msg.content or '')
+            messages_html += f'''
+<div class="turn assistant-turn">
+  <div class="turn-label"><span class="label-chip asst-chip">Svar {turn_num}</span></div>
+  <div class="bubble asst-bubble">{content_html}</div>
+</div>'''
+
+    _da_months = ['januar','februar','marts','april','maj','juni',
+                  'juli','august','september','oktober','november','december']
+    _now = datetime.utcnow().replace(tzinfo=pytz.utc).astimezone(danish_tz)
+    exported_at = f"{_now.day}. {_da_months[_now.month - 1]} {_now.year} kl. {_now.strftime('%H:%M')}"
+
+    html = _pdf_html(conv.title, 'Budget Agent', exported_at, incl_user, messages_html)
+    return html, 200, {'Content-Type': 'text/html; charset=utf-8', 'Content-Disposition': 'inline'}
+
+
+@app.route('/api/master-conversations/<int:conv_id>/export/pdf')
+@master_agent_required
+def api_master_conversation_export_pdf(conv_id):
+    import re as _re
+    user_id = session.get('user_id')
+    conv = MasterConversation.query.filter_by(id=conv_id, user_id=user_id).first_or_404()
+
+    raw_ids   = request.args.get('msg_ids', '')
+    incl_user = request.args.get('include_user', '1') == '1'
+    selected_ids = set(int(x) for x in raw_ids.split(',') if x.strip().isdigit()) if raw_ids else None
+
+    def md_to_html(text):
+        import re as _re2
+        text = _re2.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
+        text = _re2.sub(r'\*(.+?)\*',     r'<em>\1</em>',         text)
+        lines = text.split('\n')
+        out, in_table, in_list = [], False, False
+        for line in lines:
+            if line.startswith('|'):
+                cells = [c.strip() for c in line.strip('|').split('|')]
+                if all(set(c) <= set('-:| ') for c in cells):
+                    continue
+                if not in_table:
+                    if in_list: out.append('</ul>'); in_list = False
+                    out.append('<div class="tbl-wrap"><table class="md-table"><thead><tr>')
+                    out.extend(f'<th>{c}</th>' for c in cells)
+                    out.append('</tr></thead><tbody>')
+                    in_table = True
+                else:
+                    out.append('<tr>')
+                    out.extend(f'<td>{c}</td>' for c in cells)
+                    out.append('</tr>')
+            else:
+                if in_table: out.append('</tbody></table></div>'); in_table = False
+                stripped = line.strip()
+                if stripped.startswith('- ') or stripped.startswith('* '):
+                    if not in_list: out.append('<ul>'); in_list = True
+                    out.append(f'<li>{stripped[2:]}</li>')
+                elif stripped.startswith('### '):
+                    if in_list: out.append('</ul>'); in_list = False
+                    out.append(f'<h3>{stripped[4:]}</h3>')
+                elif stripped.startswith('## '):
+                    if in_list: out.append('</ul>'); in_list = False
+                    out.append(f'<h2>{stripped[3:]}</h2>')
+                elif stripped == '':
+                    if in_list: out.append('</ul>'); in_list = False
+                    out.append('<div class="spacer"></div>')
+                else:
+                    if in_list: out.append('</ul>'); in_list = False
+                    out.append(f'<p>{line}</p>')
+        if in_table: out.append('</tbody></table></div>')
+        if in_list:  out.append('</ul>')
+        return '\n'.join(out)
+
+    messages_html = ''
+    turn_num = 0
+    all_messages = list(conv.messages)
+    for i, msg in enumerate(all_messages):
+        if msg.role == 'user':
+            if not incl_user:
+                continue
+            next_asst = next((m for m in all_messages[i+1:] if m.role == 'assistant'), None)
+            if selected_ids is not None and (next_asst is None or next_asst.id not in selected_ids):
+                continue
+            messages_html += f'''
+<div class="turn user-turn">
+  <div class="turn-label"><span class="label-chip user-chip">Spørgsmål</span></div>
+  <div class="bubble user-bubble"><p>{msg.content}</p></div>
+</div>'''
+        else:
+            if selected_ids is not None and msg.id not in selected_ids:
+                continue
+            turn_num += 1
+            content_html = md_to_html(msg.content or '')
+            messages_html += f'''
+<div class="turn assistant-turn">
+  <div class="turn-label"><span class="label-chip asst-chip">Svar {turn_num}</span></div>
+  <div class="bubble asst-bubble">{content_html}</div>
+</div>'''
+
+    _da_months = ['januar','februar','marts','april','maj','juni',
+                  'juli','august','september','oktober','november','december']
+    _now = datetime.utcnow().replace(tzinfo=pytz.utc).astimezone(danish_tz)
+    exported_at = f"{_now.day}. {_da_months[_now.month - 1]} {_now.year} kl. {_now.strftime('%H:%M')}"
+
+    html = _pdf_html(conv.title, 'Master Agent', exported_at, incl_user, messages_html)
+    return html, 200, {'Content-Type': 'text/html; charset=utf-8', 'Content-Disposition': 'inline'}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Master Agent
+# ─────────────────────────────────────────────────────────────────────────────
+
+MASTER_AGENT_SYSTEM_PROMPT = (
+    "Du er JKF's interne Master Agent – et samlet AI-system med adgang til alle JKF's datakilder.\n\n"
+    "Du har fire værktøjer:\n"
+    "- search_knowledge_base: Søg i videnbase, uploadede dokumenter og hjemmesideindhold\n"
+    "- query_sales_data: Hent salgsdata (omsætning, kunder, varer, marginer) fra data warehouse\n"
+    "- query_budget_data: Hent budgetdata (budget vs. forbrug, afvigelser, GL-konti) fra ERP\n"
+    "- search_bc_products: Søg produkter og lagerstatus i Business Central\n\n"
+    "Regler:\n"
+    "1. Kald ALTID det relevante værktøj – gæt aldrig på svar uden at hente data\n"
+    "2. Du kan kalde flere værktøjer i samme svar, hvis spørgsmålet kræver data fra flere kilder\n"
+    "3. Svar på det sprog brugeren skriver på (dansk, engelsk, tysk osv.)\n"
+    "4. Brug markdown-tabeller til tabeldata og **fed** til vigtige tal\n"
+    "5. Tal formateres med dansk konvention: tusindtalsseparator (.), decimal med komma (,)\n"
+    "6. Vær konkret og præcis – brug tal direkte fra de hentede data"
+)
+
+MASTER_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "search_knowledge_base",
+            "description": (
+                "Søg i JKF's videnbase: Q&A-artikler, uploadede dokumenter og hjemmesideindhold. "
+                "Brug dette til generelle spørgsmål om JKF, produkter, processer, politikker, "
+                "leveringsbetingelser, returret og alt andet der ikke er salgs- eller budgetdata."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Søgeforespørgsel på naturligt sprog"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "query_sales_data",
+            "description": (
+                "Forespørg salgsdata fra JKF's data warehouse. "
+                "Brug dette til spørgsmål om omsætning, salg pr. kunde/vare/land/periode, "
+                "salgstendenser, marginer, top-kunder og top-varer."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "description": "Spørgsmål om salgsdata på naturligt sprog",
+                    },
+                },
+                "required": ["question"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "query_budget_data",
+            "description": (
+                "Forespørg budgetdata og regnskabsoplysninger fra JKF's ERP-system. "
+                "Brug dette til spørgsmål om budget vs. forbrug, afvigelser, GL-konti, "
+                "afdelingsudgifter og posteringer."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "description": "Spørgsmål om budget- og regnskabsdata på naturligt sprog",
+                    },
+                },
+                "required": ["question"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_bc_products",
+            "description": (
+                "Søg produkter og lagerstatus i Business Central. "
+                "Brug dette til spørgsmål om varenumre, lagerbeholdning, priser og leveringstider."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "description": {
+                        "type": "string",
+                        "description": "Produktbeskrivelse eller varenummer at søge efter",
+                    },
+                },
+                "required": ["description"],
+            },
+        },
+    },
+]
+
+
+def _master_search_kb(query: str, history: list) -> str:
+    prior_user_turns = [m['content'] for m in history if m.get('role') == 'user'][-5:]
+    ctx = get_context_from_qdrant(query, top_k=7, prior_user_turns=prior_user_turns)
+    return ctx if ctx else "Ingen relevant information fundet i videnbasen."
+
+
+def _master_query_sales(question: str, history: list) -> str:
+    try:
+        full_schema = get_dw_schema()
+    except Exception as e:
+        return f"Fejl: kunne ikke oprette forbindelse til salgs-datalageret ({e})."
+
+    sales_lines = [l for l in full_schema.split('\n')
+                   if l.split('(')[0].strip().lower() in _ALLOWED_SALES_TABLES]
+    schema = '\n'.join(sales_lines) if sales_lines else full_schema
+
+    sql_system = (
+        "Du er en T-SQL ekspert for JKF's SQL Server datawarehouse (SQL Server 2019).\n\n"
+        "VIGTIGE TABELLER:\n"
+        "- [Salg]: Primær salgsoversigt – Varenummer, Beskrivelse, Varegruppe, Dato (date), KundeNavn, Land, Salgsbeløb (decimal), Rabatbeløb, dækningsbidrag. "
+        "Brug kolonnen [Varegruppe] direkte fra [Salg] til alle spørgsmål om varegrupper – join ALDRIG [Item] for dette formål.\n"
+        "- [Sales Invoice Header]: Fakturahoveder – [Posting Date], [Sell-to Customer No_], [Bill-to Name], CompanyCode.\n"
+        "- [Sales Invoice Line]: Fakturalinjer – Amount, Quantity, [No_] (varenummer), CompanyCode.\n"
+        "- [Customer]: Kunder – [No_], Name, [Country_Region Code], [Salesperson Code].\n"
+        "- [Item]: Varer – [No_], Description.\n\n"
+        "ADGANGSBEGRÆNSNING: Brug KUN ovenstående tabeller.\n\n"
+        "FULDT SKEMA:\n"
+        f"{schema}\n\n"
+        "OBLIGATORISKE REGLER:\n"
+        "0. Generér ALTID et SELECT-statement.\n"
+        "1. Returner KUN rå SQL, ingen forklaring, ingen markdown, ingen ```.\n"
+        "2. Brug firkantede parenteser om tabelnavne og kolonner med mellemrum.\n"
+        "3. Subquery-aliaser UDEN AS: FROM (SELECT ...) sub.\n"
+        "4. Brug TOP n (ikke LIMIT).\n"
+        "5. Brug aldrig DROP, INSERT, UPDATE, DELETE, TRUNCATE, ALTER, CREATE, EXEC, QUALIFY.\n"
+        "6. YEAR(Dato) og MONTH(Dato) til dato-filtrering på [Salg].\n"
+        "7. Ingen ORDER BY i subqueries uden TOP.\n"
+        "8. HAVING SUM(Salgsbeløb) > 0 ved min/max af beregnet værdi.\n"
+    )
+
+    sql_messages = [{'role': 'system', 'content': sql_system}]
+    for h in history[-10:]:
+        if h.get('role') in ('user', 'assistant') and h.get('content'):
+            sql_messages.append({'role': h['role'], 'content': h['content']})
+    sql_messages.append({'role': 'user', 'content': question})
+
+    try:
+        sql_resp = client.chat.completions.create(
+            model='gpt-5.4-mini', messages=sql_messages, temperature=0, max_completion_tokens=3000,
+        )
+        raw_sql = _extract_sql(sql_resp.choices[0].message.content or '')
+    except Exception as e:
+        return f"SQL-generering fejlede: {e}"
+
+    _SQL_START_RE = re.compile(r'^\s*(SELECT|WITH|;WITH)\b', re.IGNORECASE)
+    if not _SQL_START_RE.match(raw_sql):
+        return raw_sql
+
+    if _DW_DANGEROUS.search(raw_sql) or _DW_UNSUPPORTED.search(raw_sql):
+        return "Sikkerhedsfejl: forespørgslen er ikke tilladt."
+
+    salg_ok, bad_ref = _validate_sales_tables(raw_sql)
+    if not salg_ok:
+        return f"Adgangsfejl: forespørgslen forsøgte at tilgå '{bad_ref}'."
+
+    try:
+        conn = get_dw_connection()
+        cursor = conn.cursor(as_dict=True)
+        cursor.execute(raw_sql)
+        rows = cursor.fetchmany(500)
+        conn.close()
+        row_count = len(rows)
+        if rows:
+            headers = list(rows[0].keys())
+            lines = ['\t'.join(headers)]
+            for r in rows:
+                lines.append('\t'.join(str(r[h]) for h in headers))
+            result_text = '\n'.join(lines)
+        else:
+            result_text = '(ingen rækker)'
+    except Exception as e:
+        logger.error(f'Master sales query failed: {e}\nSQL: {raw_sql}')
+        return "Databasefejl: forespørgslen kunne ikke udføres. Prøv at omformulere dit spørgsmål."
+
+    return f"SQL kørt:\n{raw_sql}\n\nResultat ({row_count} rækker):\n{result_text}"
+
+
+def _master_query_budget(question: str, history: list) -> str:
+    try:
+        schema = get_budget_schema()
+    except Exception as e:
+        return f"Fejl: kunne ikke oprette forbindelse til budget-datalageret ({e})."
+
+    account_names = get_budget_account_names()
+    account_names_section = (
+        "PRÆCISE KONTONAVNE — brug disse eksakt:\n"
+        f"{account_names}\n\n"
+    ) if account_names else ''
+
+    sql_system = (
+        "Du er en T-SQL ekspert for JKF's budget-datawarehouse (SQL Server, database: BC2SQL_Data).\n\n"
+        "Du har adgang til to views:\n"
+        "1. [vw_GL_actuals_vs_budget] — Budgetafvigelser: G_L Account No_, Account Name, Year, Month, "
+        "Global Dimension 1 Code, Department Name, Actual, Budget, Variance.\n"
+        "2. [vw_GL_entry_detailed] — Rå posteringer: Account Name, Posting Date, Document No_, "
+        "Description, Amount, Department Code, Department Name, Source No_, Source Name.\n\n"
+        "FULDT SKEMA:\n"
+        f"{schema}\n\n"
+        f"{account_names_section}"
+        "OBLIGATORISKE REGLER:\n"
+        "0. Generér ALTID et SELECT-statement.\n"
+        "1. Returner KUN rå SQL, ingen forklaring, ingen markdown, ingen ```.\n"
+        "2. Brug firkantede parenteser.\n"
+        "3. Subquery-aliaser UDEN AS.\n"
+        "4. Brug TOP n (ikke LIMIT).\n"
+        "5. Brug aldrig DROP, INSERT, UPDATE, DELETE, TRUNCATE, ALTER, CREATE, EXEC, QUALIFY.\n"
+        "6. Ingen ORDER BY i subqueries uden TOP.\n"
+        "7. [vw_GL_actuals_vs_budget]: brug [Year] og [Month] direkte.\n"
+        "8. [vw_GL_entry_detailed]: brug YEAR([Posting Date]) og MONTH([Posting Date]) – ALDRIG [Year]/[Month].\n"
+        f"9. DATO-KONTEKST: I dag er {datetime.now().strftime('%Y-%m-%d')}. "
+        f"Indeværende år = {datetime.now().year}, måned = {datetime.now().month}.\n"
+        "10. Inkluder ALTID begge år (indeværende + forrige) og begræns til Month <= indeværende måned.\n"
+        "11. Negative Variance = overforbrug. Positive = underforbrug.\n"
+    )
+
+    sql_messages = [{'role': 'system', 'content': sql_system}]
+    for h in history[-10:]:
+        if h.get('role') in ('user', 'assistant') and h.get('content'):
+            sql_messages.append({'role': h['role'], 'content': h['content']})
+    sql_messages.append({'role': 'user', 'content': question})
+
+    try:
+        sql_resp = client.chat.completions.create(
+            model='gpt-5.4-mini', messages=sql_messages, temperature=0, max_completion_tokens=3000,
+        )
+        raw_sql = _extract_sql(sql_resp.choices[0].message.content or '')
+    except Exception as e:
+        return f"SQL-generering fejlede: {e}"
+
+    _SQL_START_RE = re.compile(r'^\s*(SELECT|WITH|;WITH)\b', re.IGNORECASE)
+    if not _SQL_START_RE.match(raw_sql):
+        return raw_sql
+
+    if _DW_DANGEROUS.search(raw_sql) or _DW_UNSUPPORTED.search(raw_sql):
+        return "Sikkerhedsfejl: forespørgslen er ikke tilladt."
+
+    budget_ok, bad_ref = _validate_budget_views(raw_sql)
+    if not budget_ok:
+        return f"Adgangsfejl: forespørgslen forsøgte at tilgå '{bad_ref}'."
+
+    try:
+        conn = get_budget_connection()
+        cursor = conn.cursor(as_dict=True)
+        cursor.execute(raw_sql)
+        rows = cursor.fetchmany(500)
+        conn.close()
+        row_count = len(rows)
+        if rows:
+            headers = list(rows[0].keys())
+            lines = ['\t'.join(headers)]
+            for r in rows:
+                lines.append('\t'.join(str(r[h]) for h in headers))
+            result_text = '\n'.join(lines)
+        else:
+            result_text = '(ingen rækker)'
+    except Exception as e:
+        logger.error(f'Master budget query failed: {e}\nSQL: {raw_sql}')
+        return "Databasefejl: forespørgslen kunne ikke udføres. Prøv at omformulere dit spørgsmål."
+
+    return f"SQL kørt:\n{raw_sql}\n\nResultat ({row_count} rækker):\n{result_text}"
+
+
+def _master_search_products(description: str) -> str:
+    matches = search_bc_items(description)
+    if not matches:
+        return "Ingen varer fundet med den beskrivelse. Prøv med andre søgeord."
+    lines = ["Fundne varer:"]
+    for m in matches:
+        entry = f"- {m.item_no}: {m.description}"
+        if m.description2:
+            entry += f" / {m.description2}"
+        entry += f" (lager: {m.inventory})"
+        lines.append(entry)
+    return '\n'.join(lines)
+
+
+def run_master_agent(messages: list) -> tuple:
+    """Tool-calling orchestration loop. Returns (answer_text, tools_used_list)."""
+    full_messages = [{"role": "system", "content": MASTER_AGENT_SYSTEM_PROMPT}] + messages
+    tools_used = []
+
+    for _ in range(4):
+        try:
+            resp = client.chat.completions.create(
+                model='gpt-5.4-mini',
+                messages=full_messages,
+                tools=MASTER_TOOLS,
+                tool_choice="auto",
+                temperature=0.3,
+                max_completion_tokens=4000,
+            )
+        except Exception as e:
+            logger.error(f"Master agent LLM call failed: {e}")
+            return "Beklager, der opstod en fejl. Prøv igen.", tools_used
+
+        msg = resp.choices[0].message
+
+        if not msg.tool_calls:
+            return msg.content or "Ingen svar genereret.", list(dict.fromkeys(tools_used))
+
+        full_messages.append({
+            "role": "assistant",
+            "content": msg.content,
+            "tool_calls": [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                }
+                for tc in msg.tool_calls
+            ],
+        })
+
+        sub_history = [m for m in messages if m.get('role') in ('user', 'assistant')]
+
+        for tc in msg.tool_calls:
+            tool_name = tc.function.name
+            try:
+                args = json.loads(tc.function.arguments)
+            except Exception:
+                args = {}
+            tools_used.append(tool_name)
+
+            if tool_name == "search_knowledge_base":
+                result = _master_search_kb(args.get("query", ""), sub_history)
+            elif tool_name == "query_sales_data":
+                result = _master_query_sales(args.get("question", ""), sub_history)
+            elif tool_name == "query_budget_data":
+                result = _master_query_budget(args.get("question", ""), sub_history)
+            elif tool_name == "search_bc_products":
+                result = _master_search_products(args.get("description", ""))
+            else:
+                result = f"Ukendt værktøj: {tool_name}"
+
+            full_messages.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": str(result),
+            })
+
+    try:
+        final_resp = client.chat.completions.create(
+            model='gpt-5.4-mini',
+            messages=full_messages,
+            temperature=0.3,
+            max_completion_tokens=4000,
+        )
+        return final_resp.choices[0].message.content or "Ingen svar genereret.", list(dict.fromkeys(tools_used))
+    except Exception as e:
+        logger.error(f"Master agent final call failed: {e}")
+        return "Beklager, der opstod en fejl. Prøv igen.", list(dict.fromkeys(tools_used))
+
+
+@app.route('/master-agent')
+@master_agent_required
+def master_agent():
+    user_id = session.get('user_id')
+    conversations = (MasterConversation.query
+                     .filter_by(user_id=user_id)
+                     .order_by(MasterConversation.updated_at.desc())
+                     .all())
+    return render_template('master_agent.html', conversations=conversations)
+
+
+@app.route('/api/master-conversations', methods=['GET'])
+@master_agent_required
+def api_master_conversations():
+    user_id = session.get('user_id')
+    convs = (MasterConversation.query
+             .filter_by(user_id=user_id)
+             .order_by(MasterConversation.updated_at.desc())
+             .all())
+    return jsonify([{
+        'id': c.id,
+        'title': c.title,
+        'updated_at': c.updated_at.isoformat(),
+    } for c in convs])
+
+
+@app.route('/api/master-conversations/<int:conv_id>', methods=['GET'])
+@master_agent_required
+def api_master_conversation_detail(conv_id):
+    user_id = session.get('user_id')
+    conv = MasterConversation.query.filter_by(id=conv_id, user_id=user_id).first_or_404()
+    return jsonify({
+        'id': conv.id,
+        'title': conv.title,
+        'messages': [{
+            'id': m.id,
+            'role': m.role,
+            'content': m.content,
+            'tools_used': json.loads(m.tools_used or '[]'),
+        } for m in conv.messages],
+    })
+
+
+@app.route('/api/master-conversations/<int:conv_id>', methods=['DELETE'])
+@master_agent_required
+def api_master_conversation_delete(conv_id):
+    user_id = session.get('user_id')
+    conv = MasterConversation.query.filter_by(id=conv_id, user_id=user_id).first_or_404()
+    db.session.delete(conv)
+    db.session.commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/master-chat', methods=['POST'])
+@master_agent_required
+def api_master_chat():
+    data = request.get_json(silent=True) or {}
+    message = (data.get('message') or '').strip()
+    conversation_id = data.get('conversation_id')
+
+    if not message:
+        return jsonify({'error': 'Ingen besked modtaget.'}), 400
+
+    user_id = session.get('user_id')
+
+    # Phase 1: read DB state, create conversation if new, then commit immediately
+    # so the session holds no pending state during the long LLM operation below.
+    conv = None
+    if conversation_id:
+        conv = MasterConversation.query.filter_by(id=conversation_id, user_id=user_id).first()
+    if conv is None:
+        title = message[:60] + ('…' if len(message) > 60 else '')
+        conv = MasterConversation(user_id=user_id, title=title)
+        db.session.add(conv)
+        db.session.flush()
+
+    existing = (MasterMessage.query.filter_by(conversation_id=conv.id)
+                .order_by(MasterMessage.id).all())
+    agent_messages = [
+        {'role': m.role, 'content': m.content}
+        for m in existing
+        if m.role in ('user', 'assistant')
+    ]
+    agent_messages.append({'role': 'user', 'content': message})
+    conv_id = conv.id
+
+    # Commit early — closes the transaction before the ~15-30 s agent run so
+    # concurrent requests are not blocked by a held SQLite write lock.
+    db.session.commit()
+
+    # Phase 2: run the agent (no session open during this long operation)
+    answer, tools_used = run_master_agent(agent_messages)
+
+    # Phase 3: persist results in a fresh, short-lived transaction
+    conv = MasterConversation.query.get(conv_id)
+    db.session.add(MasterMessage(conversation_id=conv_id, role='user', content=message))
+    master_asst_turn = MasterMessage(
+        conversation_id=conv_id,
+        role='assistant',
+        content=answer,
+        tools_used=json.dumps(tools_used),
+    )
+    db.session.add(master_asst_turn)
+    conv.updated_at = datetime.utcnow()
+    db.session.commit()
+
+    return jsonify({
+        'answer': answer,
+        'tools_used': tools_used,
+        'conversation_id': conv_id,
+        'msg_id': master_asst_turn.id,
     })
 
 

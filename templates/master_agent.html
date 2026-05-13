@@ -1,21 +1,21 @@
 {% extends "base.html" %}
-{% block title %}Salgs Agent – JKF{% endblock %}
+{% block title %}Master Agent – JKF{% endblock %}
 
 {% block extra_css %}
 <style>
-:root { --sc-accent: #214786; }
-[data-theme="dark"] { --sc-accent: #3b6cb5; }
-
 /* ── Layout ── */
-.sc-layout {
+.ma-layout {
     display: flex;
     height: calc(100vh - 2rem);
     max-height: calc(100vh - 2rem);
     gap: 1rem;
 }
 
+:root { --ma-accent: #214786; }
+[data-theme="dark"] { --ma-accent: #3b6cb5; }
+
 /* ── History sidebar ── */
-.sc-history {
+.ma-history {
     width: 240px;
     flex-shrink: 0;
     display: flex;
@@ -26,13 +26,13 @@
     overflow: hidden;
     transition: width 0.2s ease, opacity 0.2s ease, border-color 0.2s ease;
 }
-.sc-history.collapsed {
+.ma-history.collapsed {
     width: 0;
     opacity: 0;
     border-color: transparent;
     pointer-events: none;
 }
-.sc-history-header {
+.ma-history-header {
     padding: 0.85rem 1rem 0.6rem;
     display: flex;
     align-items: center;
@@ -40,19 +40,19 @@
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
 }
-.sc-history-label {
+.ma-history-label {
     font-size: 0.78rem;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: .05em;
     color: var(--text-muted);
 }
-.sc-history-list {
+.ma-history-list {
     flex: 1;
     overflow-y: auto;
     padding: 0.4rem 0;
 }
-.sc-history-item {
+.ma-history-item {
     display: flex;
     align-items: center;
     gap: 0.4rem;
@@ -61,14 +61,14 @@
     border-left: 3px solid transparent;
     transition: background 0.1s, border-color 0.1s;
 }
-.sc-history-item:hover { background: var(--bg-secondary, #f1f5f9); }
-[data-theme="dark"] .sc-history-item:hover { background: #1e293b; }
-.sc-history-item.active {
-    border-left-color: var(--sc-accent);
+.ma-history-item:hover { background: var(--bg-secondary, #f1f5f9); }
+[data-theme="dark"] .ma-history-item:hover { background: #1e293b; }
+.ma-history-item.active {
+    border-left-color: var(--ma-accent);
     background: var(--bg-secondary, #f1f5f9);
 }
-[data-theme="dark"] .sc-history-item.active { background: #1e293b; }
-.sc-history-item-title {
+[data-theme="dark"] .ma-history-item.active { background: #1e293b; }
+.ma-history-item-title {
     flex: 1;
     font-size: 0.8rem;
     color: var(--text-primary);
@@ -77,7 +77,7 @@
     text-overflow: ellipsis;
     line-height: 1.3;
 }
-.sc-history-item-del {
+.ma-history-item-del {
     flex-shrink: 0;
     font-size: 0.7rem;
     color: var(--text-muted);
@@ -87,17 +87,17 @@
     border-radius: 4px;
     transition: opacity 0.1s, color 0.1s;
 }
-.sc-history-item:hover .sc-history-item-del { opacity: 1; }
-.sc-history-item-del:hover { color: #dc2626; }
-.sc-history-empty {
+.ma-history-item:hover .ma-history-item-del { opacity: 1; }
+.ma-history-item-del:hover { color: #dc2626; }
+.ma-history-empty {
     font-size: 0.8rem;
     color: var(--text-muted);
     text-align: center;
     padding: 1.5rem 1rem;
 }
 
-/* ── Collapse toggle button ── */
-.sc-sidebar-toggle {
+/* ── Collapse toggle ── */
+.ma-sidebar-toggle {
     background: none;
     border: none;
     padding: 0;
@@ -110,26 +110,24 @@
     gap: 0.25rem;
     transition: color 0.15s;
 }
-.sc-sidebar-toggle:hover { color: var(--sc-accent); }
-
-/* Button shown when sidebar is hidden */
-.sc-sidebar-open-btn {
+.ma-sidebar-toggle:hover { color: var(--ma-accent); }
+.ma-sidebar-open-btn {
     display: none;
     align-items: center;
     gap: 0.35rem;
     font-size: 0.8rem;
     padding: 0.35rem 0.65rem;
 }
-.sc-sidebar-open-btn.visible { display: flex; }
+.ma-sidebar-open-btn.visible { display: flex; }
 
 /* ── Chat pane ── */
-.sc-chat-pane {
+.ma-chat-pane {
     flex: 1;
     display: flex;
     flex-direction: column;
     min-width: 0;
 }
-.sc-chat-header {
+.ma-chat-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -137,13 +135,13 @@
     flex-shrink: 0;
     gap: 0.5rem;
 }
-.sc-chat-header-left {
+.ma-chat-header-left {
     display: flex;
     align-items: center;
     gap: 0.5rem;
     min-width: 0;
 }
-.sc-chat-messages {
+.ma-chat-messages {
     flex: 1;
     overflow-y: auto;
     display: flex;
@@ -155,126 +153,120 @@
     border-radius: 12px;
     margin-bottom: 1rem;
 }
-.sc-chat-messages:empty::before {
-    content: 'Stil et spørgsmål om salg, omsætning eller kunder – jeg henter svaret direkte fra vores salgsdata.';
+.ma-chat-messages:empty::before {
+    content: 'Stil et spørgsmål om salg, budget, produkter eller JKF generelt – jeg finder svaret i de rette datakilder.';
     color: var(--text-muted);
     font-size: 0.9rem;
     margin: auto;
     text-align: center;
     padding: 2rem;
 }
-.sc-msg {
+.ma-msg {
     display: flex;
     flex-direction: column;
     max-width: 80%;
 }
-.sc-msg.user { align-self: flex-end; align-items: flex-end; }
-.sc-msg.assistant { align-self: flex-start; align-items: flex-start; max-width: min(800px, 95%); }
-.sc-bubble {
+.ma-msg.user { align-self: flex-end; align-items: flex-end; }
+.ma-msg.assistant { align-self: flex-start; align-items: flex-start; max-width: min(800px, 95%); }
+.ma-bubble {
     padding: 0.75rem 1rem;
     border-radius: 12px;
     line-height: 1.55;
     font-size: 0.9rem;
     word-break: break-word;
 }
-.sc-bubble p { margin-bottom: 0.4rem; }
-.sc-bubble p:last-child { margin-bottom: 0; }
-.sc-bubble strong { font-weight: 600; }
-.sc-bubble ol, .sc-bubble ul { padding-left: 1.3rem; margin-bottom: 0.4rem; }
-.sc-bubble li { margin-bottom: 0.15rem; }
-.sc-table-wrap {
+.ma-bubble p { margin-bottom: 0.4rem; }
+.ma-bubble p:last-child { margin-bottom: 0; }
+.ma-bubble strong { font-weight: 600; }
+.ma-bubble ol, .ma-bubble ul { padding-left: 1.3rem; margin-bottom: 0.4rem; }
+.ma-bubble li { margin-bottom: 0.15rem; }
+.ma-table-wrap {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     margin: 0.5rem 0;
 }
-.sc-bubble table {
+.ma-bubble table {
     border-collapse: collapse;
     width: 100%;
     margin: 0;
     font-size: 0.85rem;
 }
-.sc-bubble th {
-    background: var(--sc-accent);
+.ma-bubble th {
+    background: var(--ma-accent);
     color: #fff;
     padding: 0.45rem 0.75rem;
     text-align: left;
     font-weight: 600;
     white-space: nowrap;
 }
-.sc-bubble td {
+.ma-bubble td {
     padding: 0.4rem 0.75rem;
     border-bottom: 1px solid var(--border);
     white-space: nowrap;
 }
-.sc-bubble tr:last-child td { border-bottom: none; }
-.sc-bubble tr:nth-child(even) td { background: rgba(0,0,0,.03); }
-[data-theme="dark"] .sc-bubble tr:nth-child(even) td { background: rgba(255,255,255,.04); }
-.sc-msg.user .sc-bubble {
-    background: var(--sc-accent);
+.ma-bubble tr:last-child td { border-bottom: none; }
+.ma-bubble tr:nth-child(even) td { background: rgba(0,0,0,.03); }
+[data-theme="dark"] .ma-bubble tr:nth-child(even) td { background: rgba(255,255,255,.04); }
+.ma-msg.user .ma-bubble {
+    background: var(--ma-accent);
     color: #fff;
     border-bottom-right-radius: 4px;
 }
-.sc-msg.assistant .sc-bubble {
+.ma-msg.assistant .ma-bubble {
     background: var(--bg-secondary, #f1f5f9);
     color: var(--text-primary);
     border-bottom-left-radius: 4px;
 }
-[data-theme="dark"] .sc-msg.assistant .sc-bubble { background: #1e293b; }
-.sc-sql-toggle {
-    margin-top: 0.4rem;
-    font-size: 0.75rem;
-    color: var(--text-muted);
-    cursor: pointer;
+[data-theme="dark"] .ma-msg.assistant .ma-bubble { background: #1e293b; }
+
+/* ── Source badges ── */
+.ma-sources {
     display: flex;
-    align-items: center;
+    flex-wrap: wrap;
     gap: 0.3rem;
-    user-select: none;
+    margin-top: 0.45rem;
 }
-.sc-sql-toggle:hover { color: var(--sc-accent); }
-.sc-sql-block {
-    display: none;
-    margin-top: 0.4rem;
-    background: var(--bg-secondary, #f8fafc);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 0.6rem 0.8rem;
-    font-family: 'Courier New', monospace;
-    font-size: 0.78rem;
-    color: var(--text-primary);
-    white-space: pre-wrap;
-    word-break: break-all;
-    max-width: 600px;
+.ma-source-badge {
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    letter-spacing: .02em;
+    text-transform: uppercase;
 }
-[data-theme="dark"] .sc-sql-block { background: #0f172a; }
-.sc-row-count {
-    font-size: 0.72rem;
-    color: var(--text-muted);
-    margin-top: 0.25rem;
-}
-.sc-error .sc-bubble {
+.ma-source-badge.kb       { background: #dce6f5; color: #214786; }
+.ma-source-badge.sales    { background: #c8d8ee; color: #214786; }
+.ma-source-badge.budget   { background: #b4c9e6; color: #214786; }
+.ma-source-badge.products { background: #a0badd; color: #214786; }
+[data-theme="dark"] .ma-source-badge.kb       { background: #1a2e4a; color: #7aa3d4; }
+[data-theme="dark"] .ma-source-badge.sales    { background: #1e3555; color: #8cb5e0; }
+[data-theme="dark"] .ma-source-badge.budget   { background: #223c60; color: #9ec7ec; }
+[data-theme="dark"] .ma-source-badge.products { background: #26436b; color: #b0d8f8; }
+
+.ma-error .ma-bubble {
     background: #fee2e2;
     color: #991b1b;
     border: 1px solid #fca5a5;
 }
-[data-theme="dark"] .sc-error .sc-bubble {
+[data-theme="dark"] .ma-error .ma-bubble {
     background: #3b0000;
     color: #fca5a5;
     border-color: #7f1d1d;
 }
-.sc-typing .sc-bubble {
+.ma-typing .ma-bubble {
     background: var(--bg-secondary, #f1f5f9);
     color: var(--text-muted);
     font-style: italic;
 }
-[data-theme="dark"] .sc-typing .sc-bubble { background: #1e293b; }
+[data-theme="dark"] .ma-typing .ma-bubble { background: #1e293b; }
 
 /* ── Input row ── */
-.sc-input-row {
+.ma-input-row {
     display: flex;
     gap: 0.5rem;
     flex-shrink: 0;
 }
-.sc-input-row textarea {
+.ma-input-row textarea {
     flex: 1;
     resize: none;
     border-radius: 10px;
@@ -287,15 +279,15 @@
     outline: none;
     transition: border-color 0.15s;
 }
-.sc-input-row textarea:focus { border-color: var(--sc-accent); }
-.sc-input-row textarea::placeholder { color: var(--text-muted); }
-.sc-send-btn {
+.ma-input-row textarea:focus { border-color: var(--ma-accent); }
+.ma-input-row textarea::placeholder { color: var(--text-muted); }
+.ma-send-btn {
     flex-shrink: 0;
     width: 44px;
     height: 44px;
     border-radius: 10px;
     border: none;
-    background: var(--sc-accent);
+    background: var(--ma-accent);
     color: #fff;
     font-size: 1rem;
     cursor: pointer;
@@ -304,59 +296,58 @@
     justify-content: center;
     transition: opacity 0.15s;
 }
-.sc-send-btn:disabled { opacity: 0.5; cursor: default; }
+.ma-send-btn:disabled { opacity: 0.5; cursor: default; }
 </style>
 {% endblock %}
 
 {% block main_content %}
-<div class="sc-layout">
+<div class="ma-layout">
 
     <!-- ── History sidebar ── -->
-    <div class="sc-history" id="scHistory">
-        <div class="sc-history-header">
-            <span class="sc-history-label">Samtalehistorik</span>
-            <button class="sc-sidebar-toggle" id="scHistoryCollapseBtn" title="Skjul historik">
+    <div class="ma-history" id="maHistory">
+        <div class="ma-history-header">
+            <span class="ma-history-label">Samtalehistorik</span>
+            <button class="ma-sidebar-toggle" id="maHistoryCollapseBtn" title="Skjul historik">
                 <i class="fas fa-chevron-left"></i>
             </button>
         </div>
-        <div class="sc-history-list" id="historyList">
+        <div class="ma-history-list" id="historyList">
             {% if conversations %}
                 {% for conv in conversations %}
-                <div class="sc-history-item" data-id="{{ conv.id }}" onclick="loadConversation({{ conv.id }}, this)">
-                    <span class="sc-history-item-title" title="{{ conv.title }}">{{ conv.title }}</span>
-                    <span class="sc-history-item-del" title="Slet"
+                <div class="ma-history-item" data-id="{{ conv.id }}" onclick="loadConversation({{ conv.id }}, this)">
+                    <span class="ma-history-item-title" title="{{ conv.title }}">{{ conv.title }}</span>
+                    <span class="ma-history-item-del" title="Slet"
                           onclick="confirmDelete(event, {{ conv.id }}, '{{ conv.title|e }}')">
                         <i class="fas fa-trash"></i>
                     </span>
                 </div>
                 {% endfor %}
             {% else %}
-                <div class="sc-history-empty" id="historyEmpty">Ingen samtaler endnu</div>
+                <div class="ma-history-empty" id="historyEmpty">Ingen samtaler endnu</div>
             {% endif %}
         </div>
     </div>
 
     <!-- ── Chat pane ── -->
-    <div class="sc-chat-pane">
-        <div class="sc-chat-header">
-            <div class="sc-chat-header-left">
-                <!-- Shown only when sidebar is collapsed -->
-                <button class="btn btn-sm btn-outline-secondary sc-sidebar-open-btn" id="sidebarOpenBtn" title="Vis historik">
+    <div class="ma-chat-pane">
+        <div class="ma-chat-header">
+            <div class="ma-chat-header-left">
+                <button class="btn btn-sm btn-outline-secondary ma-sidebar-open-btn" id="sidebarOpenBtn" title="Vis historik">
                     <i class="fas fa-history"></i>
                     <span>Historik</span>
                 </button>
                 <div>
                     <h2 class="mb-0" style="font-size:1.25rem;">
-                        <i class="fas fa-chart-bar me-2" style="color: var(--sc-accent);"></i>Salgs Agent
+                        <i class="fas fa-layer-group me-2" style="color: var(--ma-accent);"></i>Master Agent
                     </h2>
                     <p class="text-muted mb-0" style="font-size:0.82rem;">
-                        Spørg om salg, omsætning, kunder og trends direkte fra vores salgsdata
+                        Vidensbase &middot; Salg &middot; Budget &middot; Produkter
                     </p>
                 </div>
             </div>
             <div class="d-flex align-items-center gap-2">
                 <div id="exportBtns" style="display:none;" class="d-flex gap-1">
-<button class="btn btn-sm btn-outline-secondary" id="exportPdfBtn" title="Eksporter som PDF">
+                    <button class="btn btn-sm btn-outline-secondary" id="exportPdfBtn" title="Eksporter som PDF">
                         <i class="fas fa-file-pdf me-1" style="color:#c0392b;"></i>PDF
                     </button>
                 </div>
@@ -366,12 +357,12 @@
             </div>
         </div>
 
-        <div class="sc-chat-messages" id="chatMessages"></div>
+        <div class="ma-chat-messages" id="chatMessages"></div>
 
-        <div class="sc-input-row">
+        <div class="ma-input-row">
             <textarea id="userInput" rows="2"
-                placeholder="F.eks. 'Hvad er vores totale salg i 2025?' eller 'Hvilke kunder har købt mest det seneste år?'"></textarea>
-            <button class="sc-send-btn" id="sendBtn" title="Send">
+                placeholder="F.eks. 'Hvem er vores top-5 kunder i 2025?' eller 'Hvilke konti er over budget og hvad er de største afvigelser?'"></textarea>
+            <button class="ma-send-btn" id="sendBtn" title="Send">
                 <i class="fas fa-paper-plane"></i>
             </button>
         </div>
@@ -415,7 +406,6 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body pt-3 pb-1">
-                <!-- Include user questions toggle -->
                 <div class="d-flex align-items-center justify-content-between mb-3 p-3 rounded"
                      style="background:var(--bg-secondary,#f8fafc); border:1px solid var(--border);">
                     <div>
@@ -426,8 +416,6 @@
                         <input class="form-check-input" type="checkbox" id="pdfIncludeUser" checked>
                     </div>
                 </div>
-
-                <!-- Answer selection -->
                 <div class="mb-2 d-flex align-items-center justify-content-between">
                     <span style="font-size:.82rem; font-weight:600; color:var(--text-muted);">VÆLG SVAR DER SKAL INKLUDERES</span>
                     <div class="d-flex gap-2">
@@ -459,62 +447,88 @@ const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute
 let history = [];
 let currentConvId = null;
 let isLoading = false;
-let loadedMessages = [];  // full message objects including id, role, content
+let loadedMessages = [];
 
-const messagesEl      = document.getElementById('chatMessages');
-const inputEl         = document.getElementById('userInput');
-const sendBtn         = document.getElementById('sendBtn');
-const newConvBtn      = document.getElementById('newConvBtn');
-const historyList     = document.getElementById('historyList');
-const scHistory       = document.getElementById('scHistory');
-const sidebarOpenBtn  = document.getElementById('sidebarOpenBtn');
-const collapseBtn     = document.getElementById('scHistoryCollapseBtn');
-const exportBtns      = document.getElementById('exportBtns');
-const exportPdfBtn    = document.getElementById('exportPdfBtn');
+const messagesEl     = document.getElementById('chatMessages');
+const inputEl        = document.getElementById('userInput');
+const sendBtn        = document.getElementById('sendBtn');
+const newConvBtn     = document.getElementById('newConvBtn');
+const exportBtns     = document.getElementById('exportBtns');
+const exportPdfBtn   = document.getElementById('exportPdfBtn');
+const historyList    = document.getElementById('historyList');
+const maHistory      = document.getElementById('maHistory');
+const sidebarOpenBtn = document.getElementById('sidebarOpenBtn');
+const collapseBtn    = document.getElementById('maHistoryCollapseBtn');
+
+function setExportVisible(v) { exportBtns.style.display = v ? '' : 'none'; }
 
 /* ── Sidebar collapse ── */
-let sidebarCollapsed = localStorage.getItem('scSidebarCollapsed') === 'true';
+let sidebarCollapsed = localStorage.getItem('maSidebarCollapsed') === 'true';
 
 function applySidebarState(animate) {
-    if (!animate) scHistory.style.transition = 'none';
-    scHistory.classList.toggle('collapsed', sidebarCollapsed);
+    if (!animate) maHistory.style.transition = 'none';
+    maHistory.classList.toggle('collapsed', sidebarCollapsed);
     sidebarOpenBtn.classList.toggle('visible', sidebarCollapsed);
-    if (!animate) requestAnimationFrame(() => { scHistory.style.transition = ''; });
+    if (!animate) requestAnimationFrame(() => { maHistory.style.transition = ''; });
 }
 
 collapseBtn.addEventListener('click', () => {
     sidebarCollapsed = true;
-    localStorage.setItem('scSidebarCollapsed', 'true');
+    localStorage.setItem('maSidebarCollapsed', 'true');
     applySidebarState(true);
 });
 sidebarOpenBtn.addEventListener('click', () => {
     sidebarCollapsed = false;
-    localStorage.setItem('scSidebarCollapsed', 'false');
+    localStorage.setItem('maSidebarCollapsed', 'false');
     applySidebarState(true);
 });
 
-// Apply on load without animation
 applySidebarState(false);
 
 /* ── Scroll ── */
 function scrollBottom() { messagesEl.scrollTop = messagesEl.scrollHeight; }
 
-/* ── Message rendering ── */
-function appendMessage(role, content, extras) {
+/* ── Source badge helpers ── */
+const TOOL_LABELS = {
+    search_knowledge_base: { label: 'Vidensbase', cls: 'kb' },
+    query_sales_data:      { label: 'Salgsdata',  cls: 'sales' },
+    query_budget_data:     { label: 'Budgetdata', cls: 'budget' },
+    search_bc_products:    { label: 'Produkter',  cls: 'products' },
+};
+
+function buildSourceBadges(toolsUsed) {
+    if (!toolsUsed || toolsUsed.length === 0) return null;
     const wrap = document.createElement('div');
-    wrap.className = `sc-msg ${role}`;
+    wrap.className = 'ma-sources';
+    const seen = new Set();
+    for (const t of toolsUsed) {
+        if (seen.has(t)) continue;
+        seen.add(t);
+        const info = TOOL_LABELS[t];
+        if (!info) continue;
+        const badge = document.createElement('span');
+        badge.className = `ma-source-badge ${info.cls}`;
+        badge.textContent = info.label;
+        wrap.appendChild(badge);
+    }
+    return wrap.children.length ? wrap : null;
+}
+
+/* ── Message rendering ── */
+function appendMessage(role, content, toolsUsed) {
+    const wrap = document.createElement('div');
+    wrap.className = `ma-msg ${role}`;
 
     const bubble = document.createElement('div');
-    bubble.className = 'sc-bubble';
+    bubble.className = 'ma-bubble';
     if (role === 'assistant') {
         bubble.innerHTML = marked.parse(content);
-        // Wrap tables for horizontal scroll + force all columns left-aligned
         bubble.querySelectorAll('table').forEach(tbl => {
             tbl.querySelectorAll('th, td').forEach(cell => {
                 cell.style.textAlign = 'left';
             });
             const wrapper = document.createElement('div');
-            wrapper.className = 'sc-table-wrap';
+            wrapper.className = 'ma-table-wrap';
             tbl.parentNode.insertBefore(wrapper, tbl);
             wrapper.appendChild(tbl);
         });
@@ -523,32 +537,9 @@ function appendMessage(role, content, extras) {
     }
     wrap.appendChild(bubble);
 
-    if (extras && extras.sql) {
-        const toggleRow = document.createElement('div');
-        toggleRow.className = 'sc-sql-toggle';
-        toggleRow.innerHTML = '<i class="fas fa-code"></i> Vis SQL';
-
-        const sqlBlock = document.createElement('pre');
-        sqlBlock.className = 'sc-sql-block';
-        sqlBlock.textContent = extras.sql;
-
-        let open = false;
-        toggleRow.addEventListener('click', () => {
-            open = !open;
-            sqlBlock.style.display = open ? 'block' : 'none';
-            toggleRow.innerHTML = open
-                ? '<i class="fas fa-code"></i> Skjul SQL'
-                : '<i class="fas fa-code"></i> Vis SQL';
-        });
-        wrap.appendChild(toggleRow);
-        wrap.appendChild(sqlBlock);
-
-        if (extras.row_count !== undefined && extras.row_count !== null) {
-            const rc = document.createElement('div');
-            rc.className = 'sc-row-count';
-            rc.textContent = `${extras.row_count} rækker returneret`;
-            wrap.appendChild(rc);
-        }
+    if (role === 'assistant' && toolsUsed) {
+        const badges = buildSourceBadges(toolsUsed);
+        if (badges) wrap.appendChild(badges);
     }
 
     messagesEl.appendChild(wrap);
@@ -558,10 +549,10 @@ function appendMessage(role, content, extras) {
 
 function appendTyping() {
     const wrap = document.createElement('div');
-    wrap.className = 'sc-msg assistant sc-typing';
+    wrap.className = 'ma-msg assistant ma-typing';
     const bubble = document.createElement('div');
-    bubble.className = 'sc-bubble';
-    bubble.textContent = 'Tænker…';
+    bubble.className = 'ma-bubble';
+    bubble.textContent = 'Henter data fra de relevante kilder…';
     wrap.appendChild(bubble);
     messagesEl.appendChild(wrap);
     scrollBottom();
@@ -570,9 +561,9 @@ function appendTyping() {
 
 function appendError(msg) {
     const wrap = document.createElement('div');
-    wrap.className = 'sc-msg assistant sc-error';
+    wrap.className = 'ma-msg assistant ma-error';
     const bubble = document.createElement('div');
-    bubble.className = 'sc-bubble';
+    bubble.className = 'ma-bubble';
     bubble.textContent = msg;
     wrap.appendChild(bubble);
     messagesEl.appendChild(wrap);
@@ -581,7 +572,7 @@ function appendError(msg) {
 
 /* ── History sidebar ── */
 function setActiveHistoryItem(id) {
-    document.querySelectorAll('.sc-history-item').forEach(el => {
+    document.querySelectorAll('.ma-history-item').forEach(el => {
         el.classList.toggle('active', parseInt(el.dataset.id) === id);
     });
 }
@@ -594,12 +585,12 @@ function prependHistoryItem(id, title) {
     if (existing) existing.remove();
 
     const item = document.createElement('div');
-    item.className = 'sc-history-item active';
+    item.className = 'ma-history-item active';
     item.dataset.id = id;
     item.onclick = () => loadConversation(id, item);
     item.innerHTML = `
-        <span class="sc-history-item-title" title="${title}">${title}</span>
-        <span class="sc-history-item-del" title="Slet"
+        <span class="ma-history-item-title" title="${title}">${title}</span>
+        <span class="ma-history-item-del" title="Slet"
               onclick="confirmDelete(event, ${id}, ${JSON.stringify(title)})">
             <i class="fas fa-trash"></i>
         </span>`;
@@ -609,11 +600,11 @@ function prependHistoryItem(id, title) {
 
 async function loadConversation(id, el) {
     if (isLoading) return;
-    document.querySelectorAll('.sc-history-item').forEach(e => e.classList.remove('active'));
+    document.querySelectorAll('.ma-history-item').forEach(e => e.classList.remove('active'));
     el.classList.add('active');
 
     try {
-        const res = await fetch(`/api/sales-conversations/${id}`);
+        const res = await fetch(`/api/master-conversations/${id}`);
         const data = await res.json();
         messagesEl.innerHTML = '';
         history = [];
@@ -621,11 +612,11 @@ async function loadConversation(id, el) {
         currentConvId = data.id;
 
         for (const m of data.messages) {
-            appendMessage(m.role, m.content, { sql: m.sql, row_count: m.row_count });
+            appendMessage(m.role, m.content, m.tools_used);
             history.push({ role: m.role, content: m.content });
-            loadedMessages.push(m);
+            loadedMessages.push({ id: m.id, role: m.role, content: m.content });
         }
-        setExportVisible(true);
+        setExportVisible(loadedMessages.some(m => m.role === 'assistant'));
     } catch (e) {
         appendError('Kunne ikke indlæse samtalen.');
     }
@@ -635,9 +626,9 @@ async function loadConversation(id, el) {
 /* ── Delete with modal ── */
 let pendingDeleteId = null;
 
-const deleteModal    = new bootstrap.Modal(document.getElementById('deleteConvModal'));
-const deleteTitle    = document.getElementById('deleteConvTitle');
-const deleteConfirm  = document.getElementById('deleteConvConfirmBtn');
+const deleteModal   = new bootstrap.Modal(document.getElementById('deleteConvModal'));
+const deleteTitle   = document.getElementById('deleteConvTitle');
+const deleteConfirm = document.getElementById('deleteConvConfirmBtn');
 
 function confirmDelete(event, id, title) {
     event.stopPropagation();
@@ -653,7 +644,7 @@ deleteConfirm.addEventListener('click', async () => {
     pendingDeleteId = null;
 
     try {
-        await fetch(`/api/sales-conversations/${id}`, {
+        await fetch(`/api/master-conversations/${id}`, {
             method: 'DELETE',
             headers: { 'X-CSRFToken': csrfToken },
         });
@@ -668,9 +659,9 @@ deleteConfirm.addEventListener('click', async () => {
         messagesEl.innerHTML = '';
     }
 
-    if (!historyList.querySelector('.sc-history-item')) {
+    if (!historyList.querySelector('.ma-history-item')) {
         const empty = document.createElement('div');
-        empty.className = 'sc-history-empty';
+        empty.className = 'ma-history-empty';
         empty.id = 'historyEmpty';
         empty.textContent = 'Ingen samtaler endnu';
         historyList.appendChild(empty);
@@ -687,15 +678,13 @@ async function sendMessage() {
     inputEl.value = '';
     inputEl.style.height = '';
 
-    appendMessage('user', text);
+    appendMessage('user', text, null);
     history.push({ role: 'user', content: text });
-    // id unknown until server responds; use null placeholder so index stays aligned
-    loadedMessages.push({ id: null, role: 'user', content: text });
 
     const typingEl = appendTyping();
 
     try {
-        const res = await fetch('/api/sales-chat', {
+        const res = await fetch('/api/master-chat', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -703,7 +692,6 @@ async function sendMessage() {
             },
             body: JSON.stringify({
                 message: text,
-                history: history.slice(0, -1),
                 conversation_id: currentConvId,
             }),
         });
@@ -713,9 +701,11 @@ async function sendMessage() {
         if (data.error) {
             appendError(data.error);
         } else {
-            appendMessage('assistant', data.answer, { sql: data.sql, row_count: data.row_count });
+            appendMessage('assistant', data.answer, data.tools_used);
             history.push({ role: 'assistant', content: data.answer });
-            loadedMessages.push({ id: data.msg_id || null, role: 'assistant', content: data.answer, sql: data.sql });
+            loadedMessages.push({ id: `idx-${Date.now()}`, role: 'user', content: text });
+            loadedMessages.push({ id: data.msg_id || `idx-${Date.now()+1}`, role: 'assistant', content: data.answer });
+            setExportVisible(true);
 
             if (data.conversation_id) {
                 const isNew = (currentConvId === null);
@@ -728,7 +718,6 @@ async function sendMessage() {
                     if (item) historyList.prepend(item);
                     setActiveHistoryItem(currentConvId);
                 }
-                setExportVisible(true);
             }
         }
     } catch (e) {
@@ -741,31 +730,23 @@ async function sendMessage() {
     inputEl.focus();
 }
 
-/* ── Export helpers ── */
-function setExportVisible(visible) {
-    exportBtns.style.display = visible ? 'flex' : 'none';
-}
-
-/* ── PDF export modal ── */
-const pdfModal          = new bootstrap.Modal(document.getElementById('pdfExportModal'));
-const pdfMsgList        = document.getElementById('pdfMsgList');
-const pdfIncludeUser    = document.getElementById('pdfIncludeUser');
-const pdfSelectAll      = document.getElementById('pdfSelectAll');
-const pdfSelectNone     = document.getElementById('pdfSelectNone');
-const pdfExportConfirm  = document.getElementById('pdfExportConfirmBtn');
+/* ── PDF export ── */
+const pdfModal         = new bootstrap.Modal(document.getElementById('pdfExportModal'));
+const pdfMsgList       = document.getElementById('pdfMsgList');
+const pdfIncludeUser   = document.getElementById('pdfIncludeUser');
+const pdfSelectAll     = document.getElementById('pdfSelectAll');
+const pdfSelectNone    = document.getElementById('pdfSelectNone');
+const pdfExportConfirm = document.getElementById('pdfExportConfirmBtn');
 
 exportPdfBtn.addEventListener('click', () => {
     if (!currentConvId) return;
-
-    // Build the checklist from assistant messages in loadedMessages
     pdfMsgList.innerHTML = '';
     const assistants = loadedMessages.filter(m => m.role === 'assistant');
-
     if (assistants.length === 0) {
         pdfMsgList.innerHTML = '<div class="text-muted p-3" style="font-size:.85rem;">Ingen svar at vælge.</div>';
     } else {
         assistants.forEach((m, idx) => {
-            const preview = (m.content || '').replace(/[#*|]/g, '').trim().slice(0, 90);
+            const preview = (m.content || '').replace(/[#*|`]/g, '').trim().slice(0, 90);
             const id = m.id || `idx-${idx}`;
             const isLast = idx === assistants.length - 1;
             const item = document.createElement('div');
@@ -780,7 +761,6 @@ exportPdfBtn.addEventListener('click', () => {
             pdfMsgList.appendChild(item);
         });
     }
-
     pdfModal.show();
 });
 
@@ -795,7 +775,6 @@ pdfExportConfirm.addEventListener('click', () => {
     if (realIds.length > 0) params.set('msg_ids', realIds.join(','));
     pdfModal.hide();
 
-    // Load into a hidden iframe and trigger print — no new tab shown
     let pdfFrame = document.getElementById('pdfPrintFrame');
     if (!pdfFrame) {
         pdfFrame = document.createElement('iframe');
@@ -804,7 +783,7 @@ pdfExportConfirm.addEventListener('click', () => {
         document.body.appendChild(pdfFrame);
     }
     pdfFrame.onload = () => pdfFrame.contentWindow.print();
-    pdfFrame.src = `/api/sales-conversations/${currentConvId}/export/pdf?${params}`;
+    pdfFrame.src = `/api/master-conversations/${currentConvId}/export/pdf?${params}`;
 });
 
 /* ── Event listeners ── */
@@ -815,9 +794,10 @@ inputEl.addEventListener('keydown', e => {
 newConvBtn.addEventListener('click', () => {
     currentConvId = null;
     history = [];
+    loadedMessages = [];
     messagesEl.innerHTML = '';
-    document.querySelectorAll('.sc-history-item').forEach(el => el.classList.remove('active'));
     setExportVisible(false);
+    document.querySelectorAll('.ma-history-item').forEach(el => el.classList.remove('active'));
     inputEl.focus();
 });
 inputEl.addEventListener('input', () => {

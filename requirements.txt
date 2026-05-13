@@ -3,6 +3,7 @@ Flask-SQLAlchemy
 Flask-WTF
 Flask-Caching
 Flask-CORS
+Flask-Limiter
 Werkzeug
 WTForms
 pytz
@@ -22,3 +23,4 @@ PyPDF2
 pdfplumber
 waitress
 pymssql
+openpyxl
