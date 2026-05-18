@@ -6731,6 +6731,14 @@ def _budget_run_sql(question: str, history: list, schema: str,
         "    - Hent ALTID det efterspurgte år OG året før i samme forespørgsel.\n"
         f"    - SAMME PERIODE-REGEL: filtrer begge år til Month <= {datetime.now().month} medmindre andet angives.\n"
         f"      Standard: WHERE Year IN ({datetime.now().year - 1}, {datetime.now().year}) AND Month <= {datetime.now().month}\n"
+        "14. CTE JOIN: JOINs maa kun bruge kolonner der faktisk er i CTEens SELECT-liste.\n"
+        "    Eksempel: hvis en CTE ikke har [Year] i SELECT/GROUP BY maa du IKKE skrive ON d.[Year]=s.[Year].\n"
+        "    Tilfoej [Year] til CTEens GROUP BY og SELECT - eller fjern JOIN-betingelsen paa [Year].\n"
+        "15. UNION ORDER BY: ved UNION ALL/UNION er ORDER BY KUN tilladt med bare kolonnenavne fra SELECT-listen.\n"
+        "    FORBUDT: ORDER BY ABS([VarianceTotal]) DESC (expression er ikke tilladt).\n"
+        "    TILLADT: ORDER BY [VarianceTotal] DESC (bare kolonnenavn).\n"
+        "    For udtryks-sortering: pak hele UNION i en ydre CTE og ORDER BY i den:\n"
+        "    WITH alle AS (SELECT ... UNION ALL SELECT ...) SELECT * FROM alle ORDER BY ABS([VarianceTotal]) DESC\n"
     )
 
     _SQL_START = re.compile(r'^\s*(SELECT|WITH|;WITH)\b', re.IGNORECASE)
@@ -6745,7 +6753,7 @@ def _budget_run_sql(question: str, history: list, schema: str,
             model='gpt-5.4-mini',
             messages=sql_messages,
             temperature=0,
-            max_completion_tokens=1500,
+            max_completion_tokens=2000,
         )
         raw_sql = _extract_sql(sql_resp.choices[0].message.content or '')
     except Exception as e:
@@ -7456,6 +7464,14 @@ def _master_query_budget(question: str, history: list) -> str:
         f"      Ingen årsangivelse (standard) → WHERE Year IN ({datetime.now().year - 1}, {datetime.now().year}) AND Month <= {datetime.now().month}\n"
         "    - Undtagelse: hvis brugeren spørger om et historisk år, brug Month <= 12 (hele året).\n"
         "    - Undtagelse: hvis brugeren EKSPLICIT siger 'kun i år', hent kun det ene år.\n"
+        "13. CTE JOIN-REGEL: JOINs på CTEs må KUN bruge kolonner der faktisk er i den pågældende CTEs SELECT-liste.\n"
+        "    Eksempel: hvis 'drivers' CTE ikke har [Year] i SELECT/GROUP BY, må du IKKE skrive ON d.[Year] = s.[Year].\n"
+        "    Løsning: tilføj [Year] til GROUP BY og SELECT i 'drivers' CTEen — eller drop JOIN-betingelsen på [Year].\n"
+        "14. UNION ORDER BY-REGEL: ved UNION ALL / UNION er ORDER BY kun tilladt med bare kolonnenavne fra SELECT-listen.\n"
+        "    FORBUDT: ORDER BY ABS([VarianceTotal]) DESC  ← expression er ikke tilladt ved UNION.\n"
+        "    TILLADT: ORDER BY [VarianceTotal] DESC  ← bare kolonnenavn fra SELECT.\n"
+        "    Vil du sortere på et udtryk (ABS, CASE osv.) ved UNION: pak hele UNION i en ydre CTE og ORDER BY dér.\n"
+        "    Eksempel: WITH all_rows AS (SELECT ... UNION ALL SELECT ...) SELECT * FROM all_rows ORDER BY ABS([VarianceTotal]) DESC\n"
     )
 
     sql_messages = [{'role': 'system', 'content': sql_system}]
