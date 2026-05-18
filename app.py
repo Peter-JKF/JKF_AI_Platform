@@ -778,12 +778,20 @@ Use these when a user asks about a specific order or shipment status:
 - **get_order_shipment**: Returns tracking number, carrier and tracking link. Only call after identity is verified. Always call this for posted/shipped orders to get tracking info.
 - For logged-in users (JKF Universe), identity is pre-confirmed — call get_order_status or get_order_shipment immediately without any verification step. If get_order_status returns found=false, automatically call get_order_shipment (order is likely posted/shipped).
 
+### 4. Customer-specific pricing
+When a user asks for a price, always answer immediately with the list price from get_item_details or get_item_inventory. Never ask for a customer number to show a price.
+
+If the customer number is already known (JKF Universe login or the user has already mentioned it in this conversation), call get_customer_price to show their specific net price instead. Present it simply as the price — for example "Prisen på [varenavn] er [pris] kr." — without mentioning discounts, rabatter or internal pricing logic.
+
+Never ask "hvad er dit kundenummer?" or similar just to look up a price. The customer number is only relevant if the user brings it up themselves.
+
 ### Decision guide
 1. General question about JKF, products or solutions -> [RELEVANT VIDEN]
 2. "What products do you have for dust extraction?" -> [RELEVANT VIDEN] (product catalogues)
-3. "Do you have item 1234 in stock?" or "What does it cost?" -> item tools
-4. "Where is my order S-000123?" -> verify identity if needed, then order tools
-5. No answer found anywhere -> say so honestly and offer to help the user reach JKF
+3. "Do you have item 1234 in stock?" or "What does it cost?" -> item tools (show list price, no identity needed)
+4. "What does it cost?" and customer number already known -> get_customer_price (show net price directly)
+5. "Where is my order S-000123?" -> verify identity if needed, then order tools
+6. No answer found anywhere -> say so honestly and offer to help the user reach JKF
 
 ## Metadata requirement
 Append after every response without exception:
@@ -2039,6 +2047,125 @@ def bc_get_item_details(config: dict, item_no: str) -> dict:
     return result
 
 
+def bc_get_customer_info(config: dict, customer_no: str) -> dict:
+    """Fetch customer record to get their customerDiscountGroup."""
+    try:
+        data = bc_request(config, f"/customers?$filter=number eq '{customer_no}'&$top=1")
+        items = data.get('value', [])
+        if not items:
+            data = bc_request(config, f"/customers?$filter=number eq '{customer_no.zfill(5)}'&$top=1")
+            items = data.get('value', [])
+        if not items:
+            return {'found': False}
+        c = items[0]
+        return {
+            'found': True,
+            'customer_no': c.get('number', customer_no),
+            'disc_group': c.get('customerDiscountGroup', ''),
+        }
+    except Exception as e:
+        logger.warning(f"bc_get_customer_info failed: {e}")
+        return {'found': False, 'error': str(e)}
+
+
+def bc_get_item_prices(config: dict, item_no: str) -> dict:
+    """Fetch DKK and EUR list prices from the custom Itemprice endpoint.
+    Also returns the item's discount group (itemDiscGroup) from the custom items endpoint.
+    auxiliaryIndex1 holds the price list code (DK01 = DKK, EU01 = EUR).
+    """
+    try:
+        data = bc_request(
+            config,
+            f"/Itemprice?$filter=assetNo eq '{item_no}'",
+            custom=True,
+        )
+        rows = data.get('value', [])
+        dkk = next((r.get('unitPrice') for r in rows if r.get('auxiliaryIndex1') == 'DK01'), None)
+        eur = next((r.get('unitPrice') for r in rows if r.get('auxiliaryIndex1') == 'EU01'), None)
+        if dkk is None and eur is None:
+            return {'found': False, 'item_no': item_no}
+        # Get the item's discount group from the custom items endpoint (same API)
+        item_live = _bc_fetch_item_live(config, item_no)
+        disc_group = item_live.get('itemDiscGroup', '')
+        return {'found': True, 'item_no': item_no, 'dkk': dkk, 'eur': eur, 'item_disc_group': disc_group}
+    except Exception as e:
+        logger.warning(f"bc_get_item_prices failed for {item_no}: {e}")
+        return {'found': False, 'item_no': item_no, 'error': str(e)}
+
+
+def bc_get_customer_discount(config: dict, source_no: str, item_disc_group: str) -> dict:
+    """Return the discount % by looking up Custdiscount where sourceNo = source_no.
+    source_no can be either the customer number directly or a customer discount group code.
+    assetNo = item's itemDiscGroup. lineDiscount is the actual discount field name.
+    """
+    if not source_no:
+        return {'found': False, 'discount_pct': 0.0}
+    try:
+        data = bc_request(
+            config,
+            f"/Custdiscount?$filter=sourceNo eq '{source_no}'",
+            custom=True,
+        )
+        rows = data.get('value', [])
+        # Priority: exact item disc group match > blank assetNo (catch-all) > nothing
+        exact = next((r for r in rows if r.get('assetNo', '') == item_disc_group), None)
+        wildcard = next((r for r in rows if not r.get('assetNo', '').strip()), None)
+        best = exact or wildcard
+        if not best:
+            return {'found': False, 'discount_pct': 0.0}
+        pct = float(best.get('lineDiscount', 0) or 0)
+        return {'found': True, 'discount_pct': pct, 'matched_source': source_no, 'matched_asset': best.get('assetNo', '')}
+    except Exception as e:
+        logger.warning(f"bc_get_customer_discount failed: {e}")
+        return {'found': False, 'discount_pct': 0.0, 'error': str(e)}
+
+
+def bc_get_customer_specific_price(config: dict, customer_no: str,
+                                    item_no: str, currency: str = 'DKK') -> dict:
+    """Combine 3 BC API calls to produce a customer-specific net price."""
+    currency = currency.upper()
+
+    # Step 1: customer's discount group
+    cust = bc_get_customer_info(config, customer_no)
+    cust_disc_group = cust.get('disc_group', '') if cust.get('found') else ''
+
+    # Step 2: item list prices + item discount group (both from custom API)
+    prices = bc_get_item_prices(config, item_no)
+    if not prices.get('found'):
+        return {'found': False, 'item_no': item_no,
+                'message': f'No active price found for item {item_no}.'}
+
+    base_price = prices.get('dkk') if currency == 'DKK' else prices.get('eur')
+    if base_price is None:
+        base_price = prices.get('eur') if currency == 'DKK' else prices.get('dkk')
+        currency = 'EUR' if currency == 'DKK' else 'DKK'
+
+    if base_price is None:
+        return {'found': False, 'item_no': item_no,
+                'message': f'No {currency} price found for item {item_no}.'}
+
+    # Step 3: discount % — try customer number directly first (customer-specific entry),
+    # fall back to the customer's shared discount group code if no direct entry exists.
+    item_disc_group = prices.get('item_disc_group', '')
+    discount = bc_get_customer_discount(config, customer_no, item_disc_group)
+    if not discount.get('found') and cust_disc_group:
+        discount = bc_get_customer_discount(config, cust_disc_group, item_disc_group)
+    discount_pct = discount.get('discount_pct', 0.0)
+
+    net_price = round(base_price * (1 - discount_pct / 100), 2)
+
+    return {
+        'found': True,
+        'item_no': item_no,
+        'currency': currency,
+        'list_price': base_price,
+        'discount_pct': discount_pct,
+        'cust_disc_group': cust_disc_group,
+        'item_disc_group': item_disc_group,
+        'net_price': net_price,
+    }
+
+
 # Tool schemas passed to OpenAI function calling when BC is enabled
 BC_TOOLS = [
     {
@@ -2157,6 +2284,40 @@ BC_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_customer_price",
+            "description": (
+                "Get the customer-specific net price for an item, applying the customer's negotiated discount. "
+                "ONLY call this when the customer number is already known — either from JKF Universe login "
+                "or because the user has already stated it in this conversation. "
+                "NEVER ask the user for their customer number just to look up a price — "
+                "if the customer number is not known, use get_item_details instead to show the list price. "
+                "currency: use 'DKK' when the user communicates in Danish (default), "
+                "'EUR' for all other languages — unless the user explicitly requests otherwise."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "item_number": {
+                        "type": "string",
+                        "description": "The item/product number, e.g. '1000'",
+                    },
+                    "customer_number": {
+                        "type": "string",
+                        "description": "The customer's BC account number / kundenummer, e.g. '2614'. Pass this whenever the user has stated their customer number.",
+                    },
+                    "currency": {
+                        "type": "string",
+                        "enum": ["DKK", "EUR"],
+                        "description": "DKK for Danish conversations (default), EUR otherwise",
+                    },
+                },
+                "required": ["item_number"],
+            },
+        },
+    },
 ]
 
 
@@ -2164,10 +2325,11 @@ _TOOL_LABELS: dict = {
     'da': {
         'verify_customer_identity': 'Verificerer identitet…',
         'get_order_status':         'Henter ordrestatus…',
-        'get_order_shipment':       'Henter sporingsoplysninger…',
+        'get_order_shipment':       'Henter trackingsoplysninger…',
         'get_item_inventory':       'Henter lagerinfo…',
         'get_item_details':         'Henter vareoplysninger…',
         'search_items':             'Søger i varekatalog…',
+        'get_customer_price':       'Henter din kundepris…',
         '_default':                 'Arbejder…',
     },
     'en': {
@@ -2177,6 +2339,7 @@ _TOOL_LABELS: dict = {
         'get_item_inventory':       'Checking stock…',
         'get_item_details':         'Fetching product details…',
         'search_items':             'Searching catalogue…',
+        'get_customer_price':       'Fetching your customer price…',
         '_default':                 'Working…',
     },
     'de': {
@@ -2186,6 +2349,7 @@ _TOOL_LABELS: dict = {
         'get_item_inventory':       'Lagerbestand wird geprüft…',
         'get_item_details':         'Produktdetails werden abgerufen…',
         'search_items':             'Katalog wird durchsucht…',
+        'get_customer_price':       'Ihr Kundenpreis wird abgerufen…',
         '_default':                 'Wird bearbeitet…',
     },
     'fr': {
@@ -2195,6 +2359,7 @@ _TOOL_LABELS: dict = {
         'get_item_inventory':       'Vérification du stock…',
         'get_item_details':         'Récupération des détails produit…',
         'search_items':             'Recherche dans le catalogue…',
+        'get_customer_price':       'Récupération de votre prix client…',
         '_default':                 'Traitement en cours…',
     },
     'pl': {
@@ -2204,6 +2369,7 @@ _TOOL_LABELS: dict = {
         'get_item_inventory':       'Sprawdzanie stanu magazynowego…',
         'get_item_details':         'Pobieranie szczegółów produktu…',
         'search_items':             'Przeszukiwanie katalogu…',
+        'get_customer_price':       'Pobieranie ceny klienta…',
         '_default':                 'Przetwarzanie…',
     },
 }
@@ -2329,6 +2495,34 @@ BC_TOOLS_LOGGED_IN = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_customer_price",
+            "description": (
+                "Get the specific net price for THIS customer on a given item, "
+                "taking their negotiated discount (rabat) into account. "
+                "The customer is already authenticated via JKF Universe — call this immediately. "
+                "currency: use 'DKK' when the user communicates in Danish (default), "
+                "'EUR' for all other languages — unless the user explicitly requests otherwise."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "item_number": {
+                        "type": "string",
+                        "description": "The item/product number, e.g. '1000'",
+                    },
+                    "currency": {
+                        "type": "string",
+                        "enum": ["DKK", "EUR"],
+                        "description": "DKK for Danish conversations (default), EUR otherwise",
+                    },
+                },
+                "required": ["item_number"],
+            },
+        },
+    },
 ]
 
 # Tool list for anonymous (non-logged-in) users.
@@ -2416,6 +2610,26 @@ def _dispatch_bc_tool(config: dict, tool_name: str, arguments: dict,
                 result = {
                     'found': False,
                     'message': 'Ingen varer fundet med den beskrivelse. Prøv med andre søgeord.',
+                }
+        elif tool_name == 'get_customer_price':
+            item_no     = arguments.get('item_number', '')
+            currency    = arguments.get('currency', 'DKK')
+            # customer_no from JKF Universe login takes priority;
+            # then customer_number supplied inline by the user in this conversation;
+            # then a previously verified session.
+            effective_cust = (
+                customer_no
+                or arguments.get('customer_number', '').strip()
+                or (lambda s: s[len('__cust__'):] if s.startswith('__cust__') else '')(
+                    _bc_verified_sessions.get(thread_id, '')
+                )
+            )
+            if effective_cust:
+                result = bc_get_customer_specific_price(config, effective_cust, item_no, currency)
+            else:
+                result = {
+                    'requires_customer_number': True,
+                    'message': 'Bed venligst kunden om at oplyse sit kundenummer for at se den specifikke pris.',
                 }
         else:
             result = {'error': f'Unknown tool: {tool_name}'}
@@ -3695,6 +3909,68 @@ def api_bc_sync_items():
     except Exception as e:
         logger.error(f"BC item sync failed: {e}")
         return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/integrations/business-central/debug-extension', methods=['GET'])
+@login_required
+def api_bc_debug_extension():
+    """Check whether the custom API extension is reachable at all by hitting its $metadata."""
+    bc = get_bc_integration()
+    if not bc:
+        return jsonify({'error': 'Business Central integration not configured'}), 400
+    config = get_bc_config(bc)
+    tenant_id = config.get('tenant_id', '')
+    env       = config.get('environment', '')
+    pub = config.get('custom_api_publisher', '')
+    grp = config.get('custom_api_group', '')
+    ver = config.get('custom_api_version', '')
+    company_id = config.get('company_id', '')
+    token = get_bc_token(config)
+
+    results = {}
+    metadata_url = f"https://api.businesscentral.dynamics.com/v2.0/{tenant_id}/{env}/api/{pub}/{grp}/{ver}/$metadata"
+    try:
+        resp = requests.get(metadata_url, headers={'Authorization': f'Bearer {token}'}, timeout=15)
+        import xml.etree.ElementTree as ET
+        root = ET.fromstring(resp.text)
+        ns = {'edm': 'http://docs.oasis-open.org/odata/ns/edm'}
+        entity_sets = [el.get('Name') for el in root.iter('{http://docs.oasis-open.org/odata/ns/edm}EntitySet')]
+        results['extension_root'] = {'status': resp.status_code, 'url': metadata_url, 'entity_sets': entity_sets}
+    except Exception as e:
+        results['extension_root'] = {'status': 'error', 'error': str(e), 'url': metadata_url}
+
+    return jsonify({'configured': {'publisher': pub, 'group': grp, 'version': ver}, 'results': results})
+
+
+@app.route('/api/integrations/business-central/debug-companies', methods=['GET'])
+@login_required
+def api_bc_debug_companies():
+    """List all companies from the standard BC API to verify environment name and company ID."""
+    bc = get_bc_integration()
+    if not bc:
+        return jsonify({'error': 'Business Central integration not configured'}), 400
+    config = get_bc_config(bc)
+    tenant_id = config.get('tenant_id', '')
+    env = config.get('environment', '')
+    company_id = config.get('company_id', '')
+    try:
+        token = get_bc_token(config)
+        resp = requests.get(
+            f"https://api.businesscentral.dynamics.com/v2.0/{tenant_id}/{env}/api/v2.0/companies",
+            headers={'Authorization': f'Bearer {token}', 'Accept': 'application/json'},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        companies = resp.json().get('value', [])
+        configured_match = next((c for c in companies if c.get('id') == company_id), None)
+        return jsonify({
+            'environment_ok': True,
+            'configured_company_id': company_id,
+            'configured_company_found': configured_match is not None,
+            'companies': [{'id': c.get('id'), 'name': c.get('name')} for c in companies],
+        })
+    except Exception as e:
+        return jsonify({'environment_ok': False, 'error': str(e)}), 400
 
 
 @app.route('/api/integrations/business-central/debug-custom-apis', methods=['GET'])
@@ -5890,7 +6166,69 @@ def api_sales_chat():
         "  FROM top5 k CROSS JOIN total t ORDER BY k.Omsætning DESC\n"
         "KRITISK REGEL: i den ydre SELECT må du ALDRIG skrive SUM(k.Omsætning) eller SUM(k.noget). "
         "CTE/subquery-kolonner er allerede aggregerede enkeltværdier – brug dem direkte (k.Omsætning, ikke SUM(k.Omsætning)). "
-        "SUM() på en allerede-aggregeret kolonne giver SQL Server fejl 8120."
+        "SUM() på en allerede-aggregeret kolonne giver SQL Server fejl 8120.\n\n"
+        "ANALYTISKE MØNSTRE – brug disse til analytiske og proaktive spørgsmål:\n\n"
+        "A. KUNDENEDGANG (periode vs. periode) – brug dette til 'hvorfor er kunde X faldet' og lignende:\n"
+        "  WITH cur AS (\n"
+        "      SELECT KundeNavn, Varegruppe, SUM(Salgsbeløb) AS Oms\n"
+        "      FROM [Salg] WHERE YEAR(Dato)=2025 AND MONTH(Dato)=5\n"
+        "      GROUP BY KundeNavn, Varegruppe\n"
+        "  ), prev AS (\n"
+        "      SELECT KundeNavn, Varegruppe, SUM(Salgsbeløb) AS Oms\n"
+        "      FROM [Salg] WHERE YEAR(Dato)=2025 AND MONTH(Dato)=4\n"
+        "      GROUP BY KundeNavn, Varegruppe\n"
+        "  )\n"
+        "  SELECT COALESCE(c.KundeNavn,p.KundeNavn) AS KundeNavn,\n"
+        "         COALESCE(c.Varegruppe,p.Varegruppe) AS Varegruppe,\n"
+        "         ISNULL(c.Oms,0) AS Nuværende, ISNULL(p.Oms,0) AS Forrige,\n"
+        "         ISNULL(c.Oms,0)-ISNULL(p.Oms,0) AS Ændring,\n"
+        "         CAST(100.0*(ISNULL(c.Oms,0)-ISNULL(p.Oms,0))/NULLIF(p.Oms,0) AS decimal(10,1)) AS ÆndringPct\n"
+        "  FROM cur c FULL OUTER JOIN prev p ON c.KundeNavn=p.KundeNavn AND c.Varegruppe=p.Varegruppe\n"
+        "  ORDER BY Ændring ASC\n\n"
+        "B. CROSS-SELL MULIGHED (kunder der køber X men ikke Y) – til 'hvem kan vi sælge mere X til':\n"
+        "  SELECT DISTINCT s.KundeNavn,\n"
+        "         SUM(s.Salgsbeløb) AS OmsætningAndenKategori\n"
+        "  FROM [Salg] s\n"
+        "  WHERE s.Varegruppe='AndenKategori' AND YEAR(s.Dato)=2025\n"
+        "    AND s.KundeNavn NOT IN (\n"
+        "        SELECT DISTINCT KundeNavn FROM [Salg]\n"
+        "        WHERE Varegruppe='TargetKategori' AND YEAR(Dato)=2025\n"
+        "    )\n"
+        "  GROUP BY s.KundeNavn ORDER BY OmsætningAndenKategori DESC\n\n"
+        "C. KONTAKTLISTE / PRIORITERING (historiske købere af X, sorteret efter uudnyttet potentiale):\n"
+        "  WITH historisk AS (\n"
+        "      SELECT KundeNavn, MAX(SUM(Salgsbeløb)) OVER (PARTITION BY KundeNavn) AS MaksÅrligOms\n"
+        "      FROM [Salg] WHERE Beskrivelse LIKE '%keyword%' OR Varegruppe='X'\n"
+        "      GROUP BY KundeNavn, YEAR(Dato)\n"
+        "  ), iaar AS (\n"
+        "      SELECT KundeNavn, SUM(Salgsbeløb) AS OmsIår\n"
+        "      FROM [Salg] WHERE (Beskrivelse LIKE '%keyword%' OR Varegruppe='X') AND YEAR(Dato)=2025\n"
+        "      GROUP BY KundeNavn\n"
+        "  )\n"
+        "  SELECT h.KundeNavn, h.MaksÅrligOms, ISNULL(i.OmsIår,0) AS OmsIår,\n"
+        "         h.MaksÅrligOms - ISNULL(i.OmsIår,0) AS Potentiale\n"
+        "  FROM historisk h LEFT JOIN iaar i ON h.KundeNavn=i.KundeNavn\n"
+        "  GROUP BY h.KundeNavn, h.MaksÅrligOms, i.OmsIår\n"
+        "  ORDER BY Potentiale DESC\n\n"
+        "D. AT-RISK KUNDER (aktive tidligere, ikke købt i N måneder):\n"
+        "  SELECT KundeNavn, MAX(Dato) AS SidsteOrdre,\n"
+        "         DATEDIFF(month, MAX(Dato), GETDATE()) AS MånederSidenKøb,\n"
+        "         SUM(CASE WHEN YEAR(Dato)=YEAR(GETDATE())-1 THEN Salgsbeløb ELSE 0 END) AS Oms2024\n"
+        "  FROM [Salg]\n"
+        "  GROUP BY KundeNavn\n"
+        "  HAVING DATEDIFF(month, MAX(Dato), GETDATE()) >= 3\n"
+        "     AND SUM(CASE WHEN YEAR(Dato)=YEAR(GETDATE())-1 THEN Salgsbeløb ELSE 0 END) > 0\n"
+        "  ORDER BY Oms2024 DESC\n\n"
+        "Tilpas disse mønstre til det aktuelle spørgsmål – erstat placeholders med de rigtige filtre.\n\n"
+        "KRITISK KOLONNE-REGEL:\n"
+        "15. [Sales Invoice Line] har INGEN [Posting Date]-kolonne. "
+        "Forsøg på at bruge [Posting Date] på [Sales Invoice Line] giver fejl 207 (Invalid column name). "
+        "Til dato-filtrering på fakturalinjer: join til [Sales Invoice Header] på "
+        "[Document No_] og CompanyCode: "
+        "JOIN [Sales Invoice Header] sih ON sil.[Document No_] = sih.[No_] AND sil.CompanyCode = sih.CompanyCode "
+        "og brug derefter sih.[Posting Date] til dato-filter. "
+        "Alternativt (og foretrukket til mængde/omsætnings-spørgsmål): brug [Salg]-tabellen direkte med YEAR([Dato]) – "
+        "den har Varenummer, Beskrivelse, Varegruppe, KundeNavn og Dato samlet i én tabel."
     )
 
     sql_messages = [{'role': 'system', 'content': sql_system}]
@@ -5973,7 +6311,18 @@ def api_sales_chat():
         return jsonify({'error': 'Databasefejl: forespørgslen kunne ikke udføres. Prøv at omformulere dit spørgsmål.'}), 500
 
     answer_system = (
-        "Du er en hjælpsom salgsanalytiker hos JKF. Svar altid på dansk.\n\n"
+        "Du er en analytisk salgsrådgiver hos JKF. Svar altid på dansk.\n\n"
+        "RÅDGIVERROLLE – dette er din primære opgave:\n"
+        "- Du er ikke kun en datapræsentator. Du bruger data til at anbefale konkrete handlinger.\n"
+        "- Ved kundenedgang: Identificér ALTID hvilke varegrupper/varer der driver faldet. "
+        "Er det bredt på tværs af kategorier, eller koncentreret i én? Foreslå en forklaring.\n"
+        "- Ved kontaktlister: Rangér kunder efter kontaktprioritet og forklar KORT hvorfor "
+        "(potentiale, historik, manglende kategori, fald siden sidst).\n"
+        "- Spot mønstre på tværs af data og nævn dem proaktivt, fx 'Bemærk: 3 andre kunder "
+        "viser samme faldmønster – overvej en bredere opfølgning.'\n"
+        "- Afslut ALTID med 1–3 konkrete næste skridt, fx "
+        "'Ring til Kunde X – de har ikke bestilt Varegruppe Y siden januar 2025.'\n"
+        "- Brug ✅ til muligheder/vækst og ⚠️ til risici/fald.\n\n"
         "FORMATERINGSREGLER – følg dem præcist:\n"
         "- Når svaret indeholder tabeldata med flere rækker: brug ALTID en markdown-tabel med pipe-syntaks (|).\n"
         "- TABELRETNING – vælg den retning der giver den korteste og bredeste tabel:\n"
@@ -5995,8 +6344,7 @@ def api_sales_chat():
         "  * Procenter: afrund til 1 decimal med komma som decimaltegn. 30.2934 vises som 30,3%. 5.0 vises som 5,0%.\n"
         "  * ALDRIG afkort tal til færre cifre – 53980 må IKKE vises som 53,98 eller 53.98.\n"
         "  * Behandl databaseværdien som autoritativ kilde – omformuler ikke tallet baseret på kontekst.\n"
-        "- Vær præcis og konkret – brug tal direkte fra resultatet.\n"
-        "- Afslut gerne med en kort konklusion eller et opfølgningsforslag."
+        "- Vær præcis og konkret – brug tal direkte fra resultatet."
     )
     answer_messages = [
         {'role': 'system', 'content': answer_system},
@@ -6454,14 +6802,24 @@ def api_budget_chat():
         return jsonify({'error': 'Databasefejl: forespørgslen kunne ikke udføres. Prøv at omformulere dit spørgsmål.'}), 500
 
     answer_system = (
-        "Du er en hjælpsom budget-analytiker hos JKF. Svar altid på dansk.\n\n"
-        "Din opgave er at forklare budgetafvigelser klart og præcist — angiv ALTID:\n"
+        "Du er en analytisk budget-rådgiver hos JKF. Svar altid på dansk.\n\n"
+        "RÅDGIVERROLLE – din primære opgave:\n"
+        "- Forklar ikke kun hvad afvigelsen er — forklar HVORFOR og hvad der bør gøres.\n"
+        "- Vurder om afvigelsen er et engangstilfælde eller en vedvarende trend: "
+        "hvis data viser overforbrug over flere måneder på samme konto, flag det tydeligt.\n"
+        "- Foreslå konkrete handlinger, fx 'Overvej at genforhandle kontrakt med leverandør X' "
+        "eller 'Afklar med afdelingen om der er planlagte udgifter der ikke er budgetteret.'\n"
+        "- Fremhæv proaktivt hvis en afdeling eller konto skiller sig ud fra mønsteret.\n"
+        "- Afslut ALTID med 1–2 konkrete næste skridt.\n"
+        "- Brug ⚠️ ved overforbrug og ✅ ved underforbrug/positiv trend.\n\n"
+        "ANALYSESTRUKTUR – angiv ALTID:\n"
         "1. Konstateringen: hvad er afvigelsen (beløb og procent af budget)?\n"
         "2. Forklaringen: hvad udgør forbruget (posteringer, leverandører, perioder)?\n"
-        "3. Evt. sammenligning: er dette anderledes end samme periode sidste år?\n\n"
+        "3. Trend-vurdering: er dette anderledes end samme periode sidste år, og er det et mønster?\n"
+        "4. Anbefaling: konkret næste skridt.\n\n"
         "KONTONAVNE OG KONTONUMRE:\n"
         "- Når du omtaler en konto, skriv ALTID kontonummer og navn sammen, f.eks.: **IT-konsulent (6320)**.\n"
-        "- I tabeller: inkluder kolonnen Kontonummer når(G_L Account No_) anvendes sammen med Kontonavn.\n"
+        "- I tabeller: inkluder kolonnen Kontonummer når (G_L Account No_) anvendes sammen med Kontonavn.\n"
         "- Nævn aldrig et kontonavn uden kontonummeret i parentes.\n\n"
         "FORMATERINGSREGLER:\n"
         "- Brug markdown-tabel (|) til tabeldata med flere rækker.\n"
@@ -6480,8 +6838,7 @@ def api_budget_chat():
         "  Beløb: ingen decimaler. Procenter: 1 decimal.\n"
         "  ALDRIG afkort tal — 53980 skrives som 53.980, ikke 53,98.\n"
         "- Negative afvigelser = overforbrug (fremhæv med ⚠️ eller **fed**).\n"
-        "- Positive afvigelser = underforbrug.\n"
-        "- Afslut med en kort konklusion eller et opfølgningsforslag."
+        "- Positive afvigelser = underforbrug."
     )
 
     answer_messages = [
@@ -6722,7 +7079,15 @@ MASTER_AGENT_SYSTEM_PROMPT = (
     "3. Svar på det sprog brugeren skriver på (dansk, engelsk, tysk osv.)\n"
     "4. Brug markdown-tabeller til tabeldata og **fed** til vigtige tal\n"
     "5. Tal formateres med dansk konvention: tusindtalsseparator (.), decimal med komma (,)\n"
-    "6. Vær konkret og præcis – brug tal direkte fra de hentede data"
+    "6. Vær konkret og præcis – brug tal direkte fra de hentede data\n"
+    "7. Vær analytisk og proaktiv – præsentér ikke kun data, men hvad det betyder og hvad der bør gøres. "
+    "En god salgs- eller budgetanalyse slutter altid med en anbefaling.\n"
+    "8. Ved salgsdata: identificér trends, fald og muligheder. "
+    "Ranger kontaktlister efter potentiale med en begrundelse for hvert punkt.\n"
+    "9. Ved fald eller budgetafvigelser: forklar ALTID den sandsynlige årsag baseret på de underliggende data. "
+    "Skelner det sig fra tidligere perioder? Er det bredt eller koncentreret på én kategori/konto?\n"
+    "10. Afslut altid med 1–3 konkrete næste skridt eller handlingsanbefalinger. "
+    "Brug ✅ til muligheder og ⚠️ til risici/fald."
 )
 
 MASTER_TOOLS = [
@@ -6846,7 +7211,69 @@ def _master_query_sales(question: str, history: list) -> str:
         "5. Brug aldrig DROP, INSERT, UPDATE, DELETE, TRUNCATE, ALTER, CREATE, EXEC, QUALIFY.\n"
         "6. YEAR(Dato) og MONTH(Dato) til dato-filtrering på [Salg].\n"
         "7. Ingen ORDER BY i subqueries uden TOP.\n"
-        "8. HAVING SUM(Salgsbeløb) > 0 ved min/max af beregnet værdi.\n"
+        "8. HAVING SUM(Salgsbeløb) > 0 ved min/max af beregnet værdi.\n\n"
+        "ANALYTISKE MØNSTRE – brug disse til analytiske og proaktive spørgsmål:\n\n"
+        "A. KUNDENEDGANG (periode vs. periode) – til 'hvorfor er kunde X faldet':\n"
+        "  WITH cur AS (\n"
+        "      SELECT KundeNavn, Varegruppe, SUM(Salgsbeløb) AS Oms\n"
+        "      FROM [Salg] WHERE YEAR(Dato)=2025 AND MONTH(Dato)=5\n"
+        "      GROUP BY KundeNavn, Varegruppe\n"
+        "  ), prev AS (\n"
+        "      SELECT KundeNavn, Varegruppe, SUM(Salgsbeløb) AS Oms\n"
+        "      FROM [Salg] WHERE YEAR(Dato)=2025 AND MONTH(Dato)=4\n"
+        "      GROUP BY KundeNavn, Varegruppe\n"
+        "  )\n"
+        "  SELECT COALESCE(c.KundeNavn,p.KundeNavn) AS KundeNavn,\n"
+        "         COALESCE(c.Varegruppe,p.Varegruppe) AS Varegruppe,\n"
+        "         ISNULL(c.Oms,0) AS Nuværende, ISNULL(p.Oms,0) AS Forrige,\n"
+        "         ISNULL(c.Oms,0)-ISNULL(p.Oms,0) AS Ændring,\n"
+        "         CAST(100.0*(ISNULL(c.Oms,0)-ISNULL(p.Oms,0))/NULLIF(p.Oms,0) AS decimal(10,1)) AS ÆndringPct\n"
+        "  FROM cur c FULL OUTER JOIN prev p ON c.KundeNavn=p.KundeNavn AND c.Varegruppe=p.Varegruppe\n"
+        "  ORDER BY Ændring ASC\n\n"
+        "B. CROSS-SELL MULIGHED (kunder der køber X men ikke Y) – til 'hvem kan vi sælge mere X til':\n"
+        "  SELECT DISTINCT s.KundeNavn,\n"
+        "         SUM(s.Salgsbeløb) AS OmsætningAndenKategori\n"
+        "  FROM [Salg] s\n"
+        "  WHERE s.Varegruppe='AndenKategori' AND YEAR(s.Dato)=2025\n"
+        "    AND s.KundeNavn NOT IN (\n"
+        "        SELECT DISTINCT KundeNavn FROM [Salg]\n"
+        "        WHERE Varegruppe='TargetKategori' AND YEAR(Dato)=2025\n"
+        "    )\n"
+        "  GROUP BY s.KundeNavn ORDER BY OmsætningAndenKategori DESC\n\n"
+        "C. KONTAKTLISTE / PRIORITERING (historiske købere, sorteret efter uudnyttet potentiale):\n"
+        "  WITH historisk AS (\n"
+        "      SELECT KundeNavn, MAX(SUM(Salgsbeløb)) OVER (PARTITION BY KundeNavn) AS MaksÅrligOms\n"
+        "      FROM [Salg] WHERE Beskrivelse LIKE '%keyword%' OR Varegruppe='X'\n"
+        "      GROUP BY KundeNavn, YEAR(Dato)\n"
+        "  ), iaar AS (\n"
+        "      SELECT KundeNavn, SUM(Salgsbeløb) AS OmsIår\n"
+        "      FROM [Salg] WHERE (Beskrivelse LIKE '%keyword%' OR Varegruppe='X') AND YEAR(Dato)=2025\n"
+        "      GROUP BY KundeNavn\n"
+        "  )\n"
+        "  SELECT h.KundeNavn, h.MaksÅrligOms, ISNULL(i.OmsIår,0) AS OmsIår,\n"
+        "         h.MaksÅrligOms - ISNULL(i.OmsIår,0) AS Potentiale\n"
+        "  FROM historisk h LEFT JOIN iaar i ON h.KundeNavn=i.KundeNavn\n"
+        "  GROUP BY h.KundeNavn, h.MaksÅrligOms, i.OmsIår\n"
+        "  ORDER BY Potentiale DESC\n\n"
+        "D. AT-RISK KUNDER (aktive tidligere, ikke købt i N måneder):\n"
+        "  SELECT KundeNavn, MAX(Dato) AS SidsteOrdre,\n"
+        "         DATEDIFF(month, MAX(Dato), GETDATE()) AS MånederSidenKøb,\n"
+        "         SUM(CASE WHEN YEAR(Dato)=YEAR(GETDATE())-1 THEN Salgsbeløb ELSE 0 END) AS Oms2024\n"
+        "  FROM [Salg]\n"
+        "  GROUP BY KundeNavn\n"
+        "  HAVING DATEDIFF(month, MAX(Dato), GETDATE()) >= 3\n"
+        "     AND SUM(CASE WHEN YEAR(Dato)=YEAR(GETDATE())-1 THEN Salgsbeløb ELSE 0 END) > 0\n"
+        "  ORDER BY Oms2024 DESC\n\n"
+        "Tilpas disse mønstre til det aktuelle spørgsmål – erstat placeholders med de rigtige filtre.\n\n"
+        "KRITISK KOLONNE-REGEL:\n"
+        "9. [Sales Invoice Line] har INGEN [Posting Date]-kolonne. "
+        "Forsøg på at bruge [Posting Date] på [Sales Invoice Line] giver fejl 207 (Invalid column name). "
+        "Til dato-filtrering på fakturalinjer: join til [Sales Invoice Header] på "
+        "[Document No_] og CompanyCode: "
+        "JOIN [Sales Invoice Header] sih ON sil.[Document No_] = sih.[No_] AND sil.CompanyCode = sih.CompanyCode "
+        "og brug derefter sih.[Posting Date] til dato-filter. "
+        "Alternativt (og foretrukket til mængde/omsætnings-spørgsmål): brug [Salg]-tabellen direkte med YEAR([Dato]) – "
+        "den har Varenummer, Beskrivelse, Varegruppe, KundeNavn og Dato samlet i én tabel."
     )
 
     sql_messages = [{'role': 'system', 'content': sql_system}]
@@ -6917,29 +7344,56 @@ def _master_query_budget(question: str, history: list) -> str:
 
     sql_system = (
         "Du er en T-SQL ekspert for JKF's budget-datawarehouse (SQL Server, database: BC2SQL_Data).\n\n"
-        "Du har adgang til to views:\n"
-        "1. [vw_GL_actuals_vs_budget] — Budgetafvigelser: G_L Account No_, Account Name, Year, Month, "
-        "Global Dimension 1 Code, Department Name, Actual, Budget, Variance.\n"
-        "2. [vw_GL_entry_detailed] — Rå posteringer: Account Name, Posting Date, Document No_, "
-        "Description, Amount, Department Code, Department Name, Source No_, Source Name.\n\n"
+        "Du har adgang til præcis to views — brug navnene PRÆCIS som angivet (ingen schema-prefix):\n\n"
+        "1. [vw_GL_actuals_vs_budget] — Budgetafvigelser pr. konto/afdeling/måned.\n"
+        "   Kolonner: G_L Account No_ (kontonummer), Account Name (kontonavn), Year (int), Month (int), "
+        "Global Dimension 1 Code (afdelingskode), Department Name (afdelingsnavn), "
+        "Actual (aktuel beløb for måneden), Budget (budgetteret beløb), Variance (afvigelse = Actual - Budget).\n"
+        "   Brug dette view til: afvigelsesanalyse, oversigt over over/underforbrug, budget vs. aktuel pr. konto eller afdeling.\n\n"
+        "2. [vw_GL_entry_detailed] — Rå posteringer fra kontoplanen.\n"
+        "   Kolonner: Account Name (kontonavn), Posting Date (bogføringsdato), Document No_ (bilagsnummer), "
+        "Description (beskrivelse), Amount (beløb), Department Code (afdelingskode), "
+        "Department Name (afdelingsnavn), Source No_ (leverandør-/kildenummer), Source Name (leverandørnavn).\n"
+        "   VIGTIGT: denne view har INGEN [Global Dimension 1 Code] kolonne — brug [Department Code] i stedet.\n"
+        "   Brug dette view til: forklaring af specifikke posteringer, leverandøroverblik, sammenligning med tidligere år.\n\n"
+        "STRATEGI – vælg det rette view (eller begge):\n"
+        "- 'Hvad er afvigelsen?' / 'Hvilke konti er over budget?' → brug [vw_GL_actuals_vs_budget]\n"
+        "- 'Hvorfor er konto X over budget?' / 'Hvad er der posteret?' / 'Sammenlign med sidste år' → brug [vw_GL_entry_detailed]\n"
+        "- Kombiner begge views via CTE eller JOIN, når du vil konstatere afvigelsen OG forklare den med posteringer.\n\n"
         "FULDT SKEMA:\n"
         f"{schema}\n\n"
         f"{account_names_section}"
         f"{dept_names_section}"
         "OBLIGATORISKE REGLER:\n"
-        "0. Generér ALTID et SELECT-statement.\n"
+        "0. Generér ALTID et SELECT-statement. Du har fuld adgang til dataene.\n"
         "1. Returner KUN rå SQL, ingen forklaring, ingen markdown, ingen ```.\n"
-        "2. Brug firkantede parenteser.\n"
-        "3. Subquery-aliaser UDEN AS.\n"
-        "4. Brug TOP n (ikke LIMIT).\n"
-        "5. Brug aldrig DROP, INSERT, UPDATE, DELETE, TRUNCATE, ALTER, CREATE, EXEC, QUALIFY.\n"
-        "6. Ingen ORDER BY i subqueries uden TOP.\n"
-        "7. [vw_GL_actuals_vs_budget]: brug [Year] og [Month] direkte.\n"
-        "8. [vw_GL_entry_detailed]: brug YEAR([Posting Date]) og MONTH([Posting Date]) – ALDRIG [Year]/[Month].\n"
-        f"9. DATO-KONTEKST: I dag er {datetime.now().strftime('%Y-%m-%d')}. "
-        f"Indeværende år = {datetime.now().year}, måned = {datetime.now().month}.\n"
-        "10. Inkluder ALTID begge år (indeværende + forrige) og begræns til Month <= indeværende måned.\n"
-        "11. Negative Variance = overforbrug. Positive = underforbrug.\n"
+        "2. Brug firkantede parenteser om view-navne og kolonner med mellemrum eller specialtegn.\n"
+        "2b. Inkluder ALTID [G_L Account No_] i SELECT når [Account Name] er med.\n"
+        "2c. FILTRERING: brug ALTID WHERE til at filtrere rækker — brug ALDRIG COALESCE i GROUP BY som erstatning for filtrering.\n"
+        "3. Subquery-aliaser UDEN AS: FROM (SELECT ...) sub — IKKE FROM (SELECT ...) AS sub.\n"
+        "4. Kolonne-aliaser bruger AS normalt: SUM(Actual) AS AktuelTotal.\n"
+        "5. Brug TOP n (ikke LIMIT) for at begrænse resultater.\n"
+        "6. CTEs: WITH ctename AS (SELECT ...) SELECT ... — uden semikolon foran WITH.\n"
+        "7. Brug aldrig: DROP, INSERT, UPDATE, DELETE, TRUNCATE, ALTER, CREATE, EXEC, QUALIFY.\n"
+        "8. ORDER BY er IKKE tilladt inde i subqueries eller CTEs uden TOP.\n"
+        "9. Du må KUN forespørge på de to views nævnt ovenfor — ingen andre tabeller eller views.\n"
+        "10. Negative Variance-værdier betyder overforbrug (Actual > Budget); positive betyder underforbrug.\n"
+        "11. VIGTIGT — kolonner til dato varierer mellem views:\n"
+        "    [vw_GL_actuals_vs_budget]: har kolonnerne [Year] og [Month] direkte — brug dem i WHERE, GROUP BY og SELECT.\n"
+        "    [vw_GL_entry_detailed]: har INGEN [Year] eller [Month] kolonne — brug KUN:\n"
+        "      WHERE: YEAR([Posting Date]) IN (...) AND MONTH([Posting Date]) <= ...\n"
+        "      SELECT: YEAR([Posting Date]) AS [Year], MONTH([Posting Date]) AS [Month]\n"
+        "      GROUP BY: YEAR([Posting Date]), MONTH([Posting Date])\n"
+        "    Brug ALDRIG [Year] eller [Month] direkte i [vw_GL_entry_detailed] — det giver fejl 207.\n"
+        "    Brug ALDRIG [Global Dimension 1 Code] i [vw_GL_entry_detailed] — kolonnen hedder [Department Code] der.\n"
+        f"12. DATO-KONTEKST: I dag er {datetime.now().strftime('%Y-%m-%d')}. Indeværende år = {datetime.now().year}. Indeværende måned = {datetime.now().month}.\n"
+        "    - Inkluder ALTID Year og Month i SELECT, så brugeren kan se hvilken periode tallene tilhører.\n"
+        "    - Hent ALTID det efterspurgte år OG året før i samme forespørgsel, så svaret kan sammenligne med forrige år.\n"
+        f"    - SAMME PERIODE-REGEL: sammenlign kun de måneder der er gået i det nyeste år.\n"
+        f"      Vi er i måned {datetime.now().month} ({datetime.now().year}), så filtrer begge år til Month <= {datetime.now().month} medmindre andet angives.\n"
+        f"      Ingen årsangivelse (standard) → WHERE Year IN ({datetime.now().year - 1}, {datetime.now().year}) AND Month <= {datetime.now().month}\n"
+        "    - Undtagelse: hvis brugeren spørger om et historisk år, brug Month <= 12 (hele året).\n"
+        "    - Undtagelse: hvis brugeren EKSPLICIT siger 'kun i år', hent kun det ene år.\n"
     )
 
     sql_messages = [{'role': 'system', 'content': sql_system}]
