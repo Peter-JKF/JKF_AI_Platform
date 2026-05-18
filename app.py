@@ -3198,8 +3198,14 @@ def all_conversations():
     per_page = 25
     threads = query.order_by(desc('last_msg')).offset((page - 1) * per_page).limit(per_page).all()
 
+    all_threads_ordered = (db.session.query(Message.thread_id, func.min(Message.timestamp).label('first_ts'))
+                           .filter(Message.role == 'user')
+                           .group_by(Message.thread_id)
+                           .order_by('first_ts').all())
+    thread_numbers = {t.thread_id: i + 1 for i, t in enumerate(all_threads_ordered)}
+
     conversations = []
-    for i, t in enumerate(threads):
+    for t in threads:
         conversations.append({
             'thread_id': t.thread_id,
             'started_at': t.started_at,
@@ -3209,7 +3215,7 @@ def all_conversations():
             'language': LANGUAGE_MAP.get((t.language or '').lower(), t.language or ''),
             'feedback': t.feedback,
             'knowledge_gaps': t.knowledge_gaps,
-            'number': (page - 1) * per_page + i + 1,
+            'number': thread_numbers.get(t.thread_id, '?'),
         })
 
     return render_template('all_conversations.html',
@@ -3253,7 +3259,8 @@ def conversation(thread_id):
         if ts is None:
             continue
         local_ts = ts.replace(tzinfo=pytz.utc).astimezone(danish_tz) if ts.tzinfo is None else ts.astimezone(danish_tz)
-        date_str = local_ts.strftime('%d. %b %Y')
+        _da_months_short = ['jan','feb','mar','apr','maj','jun','jul','aug','sep','okt','nov','dec']
+        date_str = f"{local_ts.day}. {_da_months_short[local_ts.month - 1].upper()} {local_ts.year}"
         if date_str not in grouped_conversations:
             grouped_conversations[date_str] = []
         grouped_conversations[date_str].append({
