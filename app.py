@@ -5780,12 +5780,15 @@ def _validate_sales_tables(sql: str) -> tuple:
 
 
 def _extract_sql(text: str) -> str:
-    """Strip markdown fences and return the raw SQL string."""
+    """Strip markdown fences and return only the first complete SQL statement."""
     text = text.strip()
     fenced = re.search(r'```(?:sql)?\s*([\s\S]+?)```', text, re.IGNORECASE)
     if fenced:
-        return fenced.group(1).strip()
-    return text
+        text = fenced.group(1).strip()
+    # If the model generated multiple statements separated by ; take only the first.
+    # Match a semicolon followed by whitespace and a new SQL keyword (SELECT/WITH).
+    multi = re.split(r';\s*\n+\s*(?=(?:WITH|SELECT|;WITH)\b)', text, maxsplit=1, flags=re.IGNORECASE)
+    return multi[0].rstrip('; \t\n')
 
 
 @app.route('/sales-chatbot')
@@ -6008,6 +6011,271 @@ def api_sales_conversation_export_pdf(conv_id):
     return html, 200, {'Content-Type': 'text/html; charset=utf-8', 'Content-Disposition': 'inline'}
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Sales Agent — multi-query tool-calling architecture
+# ─────────────────────────────────────────────────────────────────────────────
+
+SALES_AGENT_SYSTEM_PROMPT = (
+    "Du er en analytisk salgsrådgiver hos JKF med adgang til JKF's salgs-datawarehouse.\n\n"
+    "Du har ét værktøj: run_sales_query(question). Kald det for at hente data.\n\n"
+    "KALD VÆRKTØJET STRATEGISK – op til 3 gange pr. svar:\n"
+    "- Kald ALTID run_sales_query – gæt aldrig på svar uden data\n"
+    "- For komplekse spørgsmål: brug separate kald fremfor ét kald med en flad 50+-rækker tabel:\n"
+    "  * Fx: (1) totaler pr. år, (2) top-10 varegrupper opdelt pr. år, (3) YoY-ændringer pr. kategori\n"
+    "  * Fx: (1) kundes samlede nedgang, (2) hvilke varegrupper faldt mest hos kunden\n"
+    "  * Fx: (1) kunder der køber varegruppe X, (2) kunder med potentiale for varegruppe X\n"
+    "- Hvert kald skal have et fokuseret delspørgsmål med klart defineret periode og dimension\n\n"
+    "RÅDGIVERROLLE:\n"
+    "- Du er ikke kun en datapræsentator – brug data til at anbefale konkrete handlinger\n"
+    "- Ved nedgang: identificér hvilke varegrupper/varer der driver faldet; er det bredt eller koncentreret?\n"
+    "- Ved kontaktlister: rangér kunder efter potentiale og forklar KORT hvorfor\n"
+    "- Spot mønstre på tværs af data og nævn dem proaktivt\n"
+    "- Afslut ALTID med 1–3 konkrete næste skridt. Brug ✅ til muligheder og ⚠️ til risici/fald\n\n"
+    "FORMATERINGSREGLER:\n"
+    "- Brug markdown-tabeller med pipe-syntaks (|) til tabeldata med flere rækker\n"
+    "- HORISONTAL tabel (foretrukket): én enhed pr. række, tidsperioder/metrics som kolonner\n"
+    "  Eksempel: | Varegruppe | Oms. 2023 | Oms. 2024 | Oms. 2025 | Ændring |\n"
+    "- Aldrig én 'År'-kolonne med én enkelt værdi-kolonne – brug år som kolonneoverskrifter\n"
+    "- TALFORMAT: beløb med dansk tusindtalsseparator (.) og INGEN decimaler. Procenter: 1 decimal med komma.\n"
+    "- ALDRIG afkort tal – 53980 skrives 53.980, ikke 53,98\n"
+    "- Brug **fed** til vigtige tal og nøgleord\n"
+    "- Svar altid på dansk"
+)
+
+SALES_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "run_sales_query",
+            "description": (
+                "Forespørg JKF's salgs-datawarehouse. Brug til omsætning, marginer, kunder, "
+                "varegrupper, varer, lande, perioder, trends og salgsmuligheder. "
+                "Kald med ét fokuseret delspørgsmål for at få præcise, kompakte resultater."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "description": "Det specifikke spørgsmål – angiv periode, dimension og metrik tydeligt",
+                    }
+                },
+                "required": ["question"],
+            },
+        },
+    }
+]
+
+
+def _sales_run_sql(question: str, history: list, schema: str, customer_context: str) -> tuple:
+    """Generate, validate and execute one sales SQL query. Returns (result_str, raw_sql, row_count)."""
+    sql_system = (
+        "Du er en T-SQL ekspert for JKF's SQL Server datawarehouse (SQL Server 2019).\n\n"
+        "VIGTIGE TABELLER:\n"
+        "- [Salg]: Primær salgsoversigt – Varenummer, Beskrivelse, Varegruppe, Dato (date), KundeNavn, Land, Salgsbeløb (decimal), Rabatbeløb, dækningsbidrag. "
+        "Brug kolonnen [Varegruppe] direkte fra [Salg] til alle spørgsmål om varegrupper – join ALDRIG [Item] for dette formål. "
+        "Brug denne til de fleste salgs- og omsætningsspørgsmål.\n"
+        "- [Sales Invoice Header]: Fakturahoveder – [Posting Date], [Sell-to Customer No_], [Bill-to Name], CompanyCode.\n"
+        "- [Sales Invoice Line]: Fakturalinjer – Amount, Quantity, [No_] (varenummer), CompanyCode.\n"
+        "- [Customer]: Kunder – [No_], Name, [Country_Region Code], [Salesperson Code].\n"
+        "- [Item]: Varer – [No_], Description.\n\n"
+        "ADGANGSBEGRÆNSNING: Du må KUN forespørge på de ovenstående tabeller. Brug ALDRIG andre tabeller eller views.\n\n"
+        "FULDT SKEMA:\n"
+        f"{schema}\n"
+        f"{customer_context}\n"
+        "OBLIGATORISKE REGLER – følg dem præcist:\n"
+        "0. Du har ALTID fuld adgang til databasen med alle data. Svar ALDRIG med forklaringer om manglende data eller hvad du har brug for. "
+        "Generér ALTID et SELECT-statement – uanset om spørgsmålet er et opfølgningsspørgsmål eller en ny forespørgsel.\n"
+        "0b. AGGREGERING OG DIMENSIONER: Medtag KUN de kolonner i GROUP BY som brugeren eksplicit beder om. "
+        "Hvis brugeren beder om totaler pr. varegruppe for en kunde, skal KundeNavn IKKE være en separat dimension – "
+        "aggregér på tværs af alle matchende kundenavne (fx både 'Technor ApS' og 'Technor AB'). "
+        "En flad tabel med 50+ rækker er sjældent svaret – foretruk kompakte pivottabeller med år som kolonner. "
+        "Returnér max 25 rækker medmindre brugeren eksplicit beder om alle.\n"
+        "1. Returner KUN rå SQL, ingen forklaring, ingen markdown, ingen ```.\n"
+        "2. Brug firkantede parenteser om tabelnavne og kolonner med mellemrum eller specialtegn, fx [Sales Invoice Header], [Posting Date].\n"
+        "3. Giv ALTID subqueries og CTEs et tabel-alias UDEN AS-nøgleordet, fx: FROM (SELECT ...) sub – IKKE FROM (SELECT ...) AS sub. SQL Server 2019 kræver dette i visse kontekster.\n"
+        "4. Kolonne-aliaser bruger AS normalt, fx: SUM(Salgsbeløb) AS Total.\n"
+        "5. Brug TOP n (ikke LIMIT) for at begrænse resultater, fx SELECT TOP 20 ...\n"
+        "6. CTEs: skriv WITH ctnavn AS (SELECT ...) SELECT ... – uden semikolon foran WITH.\n"
+        "7. Brug aldrig: DROP, INSERT, UPDATE, DELETE, TRUNCATE, ALTER, CREATE, EXEC, QUALIFY.\n"
+        "8. For ranking: brug ROW_NUMBER() OVER (...) i en subquery – ALDRIG QUALIFY.\n"
+        "9. Sammenligning på tværs af år: brug to separate SUM med CASE eller to subqueries joinet på gruppering.\n"
+        "10. YEAR(Dato) og MONTH(Dato) virker til dato-filtrering på [Salg]-tabellen.\n"
+        "11. Når du finder minimum, maximum, laveste eller højeste af en beregnet værdi: "
+        "tilføj ALTID en HAVING-klausul der udelukker nul-salg og NULL-resultater, fx HAVING SUM(Salgsbeløb) > 0.\n"
+        "12. SQL Server forbyder ORDER BY inde i enhver subquery eller CTE medmindre den har TOP/OFFSET/FOR XML. "
+        "FORKERT: WITH cte AS (SELECT TOP 10 x FROM (SELECT x FROM t ORDER BY y) inner_t) "
+        "RIGTIGT: WITH cte AS (SELECT TOP 10 x FROM t GROUP BY x ORDER BY SUM(y) DESC) "
+        "Tilføj ALDRIG et ekstra subquery-lag blot for at sortere.\n"
+        "13. Bevar tidsperioden fra samtalehistorikken – brug samme årsfilter i opfølgningsspørgsmål.\n"
+        "14. CROSS JOIN andels-beregning:\n"
+        "  WITH top5 AS (SELECT TOP 5 [KundeNavn], SUM([Salgsbeløb]) AS Omsætning FROM [Salg] WHERE YEAR([Dato])=2025 "
+        "GROUP BY [KundeNavn] HAVING SUM([Salgsbeløb])>0 ORDER BY SUM([Salgsbeløb]) DESC), "
+        "total AS (SELECT SUM([Salgsbeløb]) AS TotalOmsætning FROM [Salg] WHERE YEAR([Dato])=2025) "
+        "SELECT k.[KundeNavn], k.Omsætning, CAST(100.0*k.Omsætning/NULLIF(t.TotalOmsætning,0) AS decimal(10,2)) AS AndelPct "
+        "FROM top5 k CROSS JOIN total t ORDER BY k.Omsætning DESC "
+        "KRITISK: brug ALDRIG SUM(k.Omsætning) i den ydre SELECT – CTE-kolonner er allerede aggregeret.\n\n"
+        "ANALYTISKE MØNSTRE:\n"
+        "A. KUNDENEDGANG (periode vs. periode):\n"
+        "  WITH cur AS (SELECT KundeNavn, Varegruppe, SUM(Salgsbeløb) AS Oms FROM [Salg] WHERE YEAR(Dato)=2025 AND MONTH(Dato)=5 GROUP BY KundeNavn, Varegruppe),\n"
+        "       prev AS (SELECT KundeNavn, Varegruppe, SUM(Salgsbeløb) AS Oms FROM [Salg] WHERE YEAR(Dato)=2025 AND MONTH(Dato)=4 GROUP BY KundeNavn, Varegruppe)\n"
+        "  SELECT COALESCE(c.KundeNavn,p.KundeNavn) AS KundeNavn, COALESCE(c.Varegruppe,p.Varegruppe) AS Varegruppe,\n"
+        "         ISNULL(c.Oms,0) AS Nuværende, ISNULL(p.Oms,0) AS Forrige, ISNULL(c.Oms,0)-ISNULL(p.Oms,0) AS Ændring,\n"
+        "         CAST(100.0*(ISNULL(c.Oms,0)-ISNULL(p.Oms,0))/NULLIF(p.Oms,0) AS decimal(10,1)) AS ÆndringPct\n"
+        "  FROM cur c FULL OUTER JOIN prev p ON c.KundeNavn=p.KundeNavn AND c.Varegruppe=p.Varegruppe ORDER BY Ændring ASC\n\n"
+        "B. CROSS-SELL (kunder der køber X men ikke Y):\n"
+        "  SELECT s.KundeNavn, SUM(s.Salgsbeløb) AS OmsætningAndenKategori FROM [Salg] s\n"
+        "  WHERE s.Varegruppe='AndenKategori' AND YEAR(s.Dato)=2025\n"
+        "    AND s.KundeNavn NOT IN (SELECT DISTINCT KundeNavn FROM [Salg] WHERE Varegruppe='TargetKategori' AND YEAR(Dato)=2025)\n"
+        "  GROUP BY s.KundeNavn ORDER BY OmsætningAndenKategori DESC\n\n"
+        "C. KONTAKTLISTE (historiske købere sorteret efter potentiale):\n"
+        "  WITH historisk AS (SELECT KundeNavn, MAX(SUM(Salgsbeløb)) OVER (PARTITION BY KundeNavn) AS MaksÅrligOms\n"
+        "      FROM [Salg] WHERE Beskrivelse LIKE '%keyword%' OR Varegruppe='X' GROUP BY KundeNavn, YEAR(Dato)),\n"
+        "       iaar AS (SELECT KundeNavn, SUM(Salgsbeløb) AS OmsIår FROM [Salg]\n"
+        "      WHERE (Beskrivelse LIKE '%keyword%' OR Varegruppe='X') AND YEAR(Dato)=2025 GROUP BY KundeNavn)\n"
+        "  SELECT h.KundeNavn, h.MaksÅrligOms, ISNULL(i.OmsIår,0) AS OmsIår, h.MaksÅrligOms-ISNULL(i.OmsIår,0) AS Potentiale\n"
+        "  FROM historisk h LEFT JOIN iaar i ON h.KundeNavn=i.KundeNavn\n"
+        "  GROUP BY h.KundeNavn, h.MaksÅrligOms, i.OmsIår ORDER BY Potentiale DESC\n\n"
+        "D. AT-RISK KUNDER (inaktive i N måneder):\n"
+        "  SELECT KundeNavn, MAX(Dato) AS SidsteOrdre, DATEDIFF(month, MAX(Dato), GETDATE()) AS MånederSidenKøb,\n"
+        "         SUM(CASE WHEN YEAR(Dato)=YEAR(GETDATE())-1 THEN Salgsbeløb ELSE 0 END) AS OmsForrigeÅr\n"
+        "  FROM [Salg] GROUP BY KundeNavn\n"
+        "  HAVING DATEDIFF(month, MAX(Dato), GETDATE()) >= 3\n"
+        "     AND SUM(CASE WHEN YEAR(Dato)=YEAR(GETDATE())-1 THEN Salgsbeløb ELSE 0 END) > 0\n"
+        "  ORDER BY OmsForrigeÅr DESC\n\n"
+        "15. [Sales Invoice Line] har INGEN [Posting Date]-kolonne (fejl 207). "
+        "Til dato-filtrering: JOIN [Sales Invoice Header] sih ON sil.[Document No_]=sih.[No_] AND sil.CompanyCode=sih.CompanyCode. "
+        "Foretrukket alternativ: brug [Salg]-tabellen direkte."
+    )
+
+    _SQL_START = re.compile(r'^\s*(SELECT|WITH|;WITH)\b', re.IGNORECASE)
+    sql_messages = [{'role': 'system', 'content': sql_system}]
+    for h in history[-10:]:
+        if h.get('role') in ('user', 'assistant') and h.get('content'):
+            sql_messages.append({'role': h['role'], 'content': h['content']})
+    sql_messages.append({'role': 'user', 'content': question})
+
+    try:
+        sql_resp = client.chat.completions.create(
+            model='gpt-5.4-mini',
+            messages=sql_messages,
+            temperature=0,
+            max_completion_tokens=2000,
+        )
+        raw_sql = _extract_sql(sql_resp.choices[0].message.content or '')
+    except Exception as e:
+        logger.error(f'Sales SQL generation failed: {e}')
+        return "Fejl: Kunne ikke generere SQL.", '', 0
+
+    if not _SQL_START.match(raw_sql):
+        return raw_sql, '', 0
+
+    if _DW_DANGEROUS.search(raw_sql) or _DW_UNSUPPORTED.search(raw_sql):
+        return "Sikkerhedsfejl: forespørgslen er ikke tilladt.", '', 0
+
+    salg_ok, bad_ref = _validate_sales_tables(raw_sql)
+    if not salg_ok:
+        return f"Adgangsfejl: forespørgslen forsøgte at tilgå '{bad_ref}'.", '', 0
+
+    logger.info(f'DW SQL generated:\n{raw_sql}')
+    try:
+        conn = get_dw_connection()
+        cursor = conn.cursor(as_dict=True)
+        cursor.execute(raw_sql)
+        rows = cursor.fetchmany(500)
+        conn.close()
+        row_count = len(rows)
+        if rows:
+            headers = list(rows[0].keys())
+            lines = ['\t'.join(headers)]
+            for r in rows:
+                lines.append('\t'.join(str(r[h]) for h in headers))
+            result_text = '\n'.join(lines)
+        else:
+            result_text = '(ingen rækker)'
+    except Exception as e:
+        err_str = str(e)
+        logger.error(f'DW query failed: {e}\nSQL was:\n{raw_sql}')
+        if '1033' in err_str:
+            return "Fejl: SQL indeholder ORDER BY i subquery uden TOP.", raw_sql, 0
+        return f"Databasefejl: forespørgslen kunne ikke udføres ({e}).", raw_sql, 0
+
+    return f"SQL kørt:\n{raw_sql}\n\nResultat ({row_count} rækker):\n{result_text}", raw_sql, row_count
+
+
+def run_sales_agent(message: str, history: list, schema: str, customer_context: str) -> tuple:
+    """Tool-calling loop. Returns (answer_text, combined_sql, total_row_count)."""
+    full_messages = [{"role": "system", "content": SALES_AGENT_SYSTEM_PROMPT}]
+    for h in history[-10:]:
+        if h.get('role') in ('user', 'assistant') and h.get('content'):
+            full_messages.append({'role': h['role'], 'content': h['content']})
+    full_messages.append({'role': 'user', 'content': message})
+
+    all_sqls: list = []
+    total_rows = 0
+    sub_history = [m for m in history if m.get('role') in ('user', 'assistant')]
+
+    for _ in range(4):
+        try:
+            resp = client.chat.completions.create(
+                model='gpt-5.4-mini',
+                messages=full_messages,
+                tools=SALES_TOOLS,
+                tool_choice="auto",
+                temperature=0.3,
+                max_completion_tokens=4000,
+            )
+        except Exception as e:
+            logger.error(f'Sales agent LLM call failed: {e}')
+            return "Beklager, der opstod en fejl. Prøv igen.", '\n---\n'.join(all_sqls), total_rows
+
+        msg = resp.choices[0].message
+        if not msg.tool_calls:
+            return msg.content or "Ingen svar genereret.", '\n---\n'.join(all_sqls), total_rows
+
+        full_messages.append({
+            "role": "assistant",
+            "content": msg.content,
+            "tool_calls": [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                }
+                for tc in msg.tool_calls
+            ],
+        })
+
+        for tc in msg.tool_calls:
+            try:
+                args = json.loads(tc.function.arguments)
+            except Exception:
+                args = {}
+            result_str, raw_sql, row_count = _sales_run_sql(
+                args.get("question", ""), sub_history, schema, customer_context
+            )
+            if raw_sql:
+                all_sqls.append(raw_sql)
+                total_rows += row_count
+            full_messages.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": result_str,
+            })
+
+    try:
+        final_resp = client.chat.completions.create(
+            model='gpt-5.4-mini',
+            messages=full_messages,
+            temperature=0.3,
+            max_completion_tokens=4000,
+        )
+        return final_resp.choices[0].message.content or "Ingen svar.", '\n---\n'.join(all_sqls), total_rows
+    except Exception as e:
+        logger.error(f'Sales agent final call failed: {e}')
+        return "Beklager, der opstod en fejl.", '\n---\n'.join(all_sqls), total_rows
+
+
 @app.route('/api/sales-chat', methods=['POST'])
 @sales_chatbot_required
 def api_sales_chat():
@@ -6112,271 +6380,18 @@ def api_sales_chat():
                 + '\n'.join(lines) + '\n'
             )
 
-    sql_system = (
-        "Du er en T-SQL ekspert for JKF's SQL Server datawarehouse (SQL Server 2019).\n\n"
-        "VIGTIGE TABELLER:\n"
-        "- [Salg]: Primær salgsoversigt – Varenummer, Beskrivelse, Varegruppe, Dato (date), KundeNavn, Land, Salgsbeløb (decimal), Rabatbeløb, dækningsbidrag. "
-        "Brug kolonnen [Varegruppe] direkte fra [Salg] til alle spørgsmål om varegrupper – join ALDRIG [Item] for dette formål. "
-        "Brug denne til de fleste salgs- og omsætningsspørgsmål.\n"
-        "- [Sales Invoice Header]: Fakturahoveder – [Posting Date], [Sell-to Customer No_], [Bill-to Name], CompanyCode.\n"
-        "- [Sales Invoice Line]: Fakturalinjer – Amount, Quantity, [No_] (varenummer), CompanyCode.\n"
-        "- [Customer]: Kunder – [No_], Name, [Country_Region Code], [Salesperson Code].\n"
-        "- [Item]: Varer – [No_], Description.\n\n"
-        "ADGANGSBEGRÆNSNING: Du må KUN forespørge på de ovenstående tabeller. Brug ALDRIG andre tabeller eller views.\n\n"
-        "FULDT SKEMA:\n"
-        f"{schema}\n"
-        f"{customer_context}\n"
-        "OBLIGATORISKE REGLER – følg dem præcist:\n"
-        "0. Du har ALTID fuld adgang til databasen med alle data. Svar ALDRIG med forklaringer om manglende data eller hvad du har brug for. "
-        "Generér ALTID et SELECT-statement – uanset om spørgsmålet er et opfølgningsspørgsmål eller en ny forespørgsel.\n"
-        "1. Returner KUN rå SQL, ingen forklaring, ingen markdown, ingen ```.\n"
-        "2. Brug firkantede parenteser om tabelnavne og kolonner med mellemrum eller specialtegn, fx [Sales Invoice Header], [Posting Date].\n"
-        "3. Giv ALTID subqueries og CTEs et tabel-alias UDEN AS-nøgleordet, fx: FROM (SELECT ...) sub – IKKE FROM (SELECT ...) AS sub. SQL Server 2019 kræver dette i visse kontekster.\n"
-        "4. Kolonne-aliaser bruger AS normalt, fx: SUM(Salgsbeløb) AS Total.\n"
-        "5. Brug TOP n (ikke LIMIT) for at begrænse resultater, fx SELECT TOP 20 ...\n"
-        "6. CTEs: skriv WITH ctnavn (kolonne) AS (SELECT ...) SELECT ... – uden semikolon foran WITH.\n"
-        "7. Brug aldrig: DROP, INSERT, UPDATE, DELETE, TRUNCATE, ALTER, CREATE, EXEC, QUALIFY.\n"
-        "8. For ranking: brug ROW_NUMBER() OVER (...) i en subquery – ALDRIG QUALIFY.\n"
-        "9. Sammenligning på tværs af år: brug to separate SUM med CASE eller to subqueries joinet på gruppering.\n"
-        "10. YEAR(Dato) og MONTH(Dato) virker til dato-filtrering på [Salg]-tabellen.\n"
-        "11. Når du finder minimum, maximum, laveste eller højeste af en beregnet værdi (margin, ratio, vækst osv.): "
-        "tilføj ALWAYS en HAVING-klausul der udelukker nul-salg og NULL-resultater, "
-        "fx HAVING SUM(Salgsbeløb) > 0. Dette forhindrer meningsløse NULL-resultater.\n"
-        "12. SQL Server forbyder ORDER BY inde i enhver subquery eller CTE medmindre den pågældende SELECT selv har TOP/OFFSET/FOR XML. "
-        "Den mest almindelige fejl er at pakke en ORDER BY i en ekstra subquery: "
-        "FORKERT – giver fejl 1033:\n"
-        "  WITH cte AS (SELECT TOP 10 x FROM (SELECT x FROM t ORDER BY y) inner_t)\n"
-        "RIGTIGT – skriv ORDER BY direkte i det niveau der har TOP:\n"
-        "  WITH cte AS (SELECT TOP 10 x FROM t GROUP BY x ORDER BY SUM(y) DESC)\n"
-        "Tilføj ALDRIG et ekstra subquery-lag blot for at sortere – skriv ORDER BY i det samme SELECT der har TOP.\n"
-        "13. Bevar tidsperioden fra samtalehistorikken. Hvis et tidligere spørgsmål filtrerede på fx 2025, "
-        "brug samme årsfilter i opfølgningsspørgsmål med mindre brugeren eksplicit angiver et andet år.\n"
-        "14. CROSS JOIN andels-beregning – dette er en hyppig fejlkilde:\n"
-        "Når du beregner hver kundes/vares andel af en total skal du bruge dette mønster:\n"
-        "  WITH top5 AS (\n"
-        "      SELECT TOP 5 [KundeNavn], SUM([Salgsbeløb]) AS Omsætning\n"
-        "      FROM [Salg] WHERE YEAR([Dato])=2025\n"
-        "      GROUP BY [KundeNavn] HAVING SUM([Salgsbeløb])>0\n"
-        "      ORDER BY SUM([Salgsbeløb]) DESC\n"
-        "  ), total AS (\n"
-        "      SELECT SUM([Salgsbeløb]) AS TotalOmsætning FROM [Salg] WHERE YEAR([Dato])=2025\n"
-        "  )\n"
-        "  SELECT k.[KundeNavn], k.Omsætning,\n"
-        "         CAST(100.0 * k.Omsætning / NULLIF(t.TotalOmsætning,0) AS decimal(10,2)) AS AndelPct\n"
-        "  FROM top5 k CROSS JOIN total t ORDER BY k.Omsætning DESC\n"
-        "KRITISK REGEL: i den ydre SELECT må du ALDRIG skrive SUM(k.Omsætning) eller SUM(k.noget). "
-        "CTE/subquery-kolonner er allerede aggregerede enkeltværdier – brug dem direkte (k.Omsætning, ikke SUM(k.Omsætning)). "
-        "SUM() på en allerede-aggregeret kolonne giver SQL Server fejl 8120.\n\n"
-        "ANALYTISKE MØNSTRE – brug disse til analytiske og proaktive spørgsmål:\n\n"
-        "A. KUNDENEDGANG (periode vs. periode) – brug dette til 'hvorfor er kunde X faldet' og lignende:\n"
-        "  WITH cur AS (\n"
-        "      SELECT KundeNavn, Varegruppe, SUM(Salgsbeløb) AS Oms\n"
-        "      FROM [Salg] WHERE YEAR(Dato)=2025 AND MONTH(Dato)=5\n"
-        "      GROUP BY KundeNavn, Varegruppe\n"
-        "  ), prev AS (\n"
-        "      SELECT KundeNavn, Varegruppe, SUM(Salgsbeløb) AS Oms\n"
-        "      FROM [Salg] WHERE YEAR(Dato)=2025 AND MONTH(Dato)=4\n"
-        "      GROUP BY KundeNavn, Varegruppe\n"
-        "  )\n"
-        "  SELECT COALESCE(c.KundeNavn,p.KundeNavn) AS KundeNavn,\n"
-        "         COALESCE(c.Varegruppe,p.Varegruppe) AS Varegruppe,\n"
-        "         ISNULL(c.Oms,0) AS Nuværende, ISNULL(p.Oms,0) AS Forrige,\n"
-        "         ISNULL(c.Oms,0)-ISNULL(p.Oms,0) AS Ændring,\n"
-        "         CAST(100.0*(ISNULL(c.Oms,0)-ISNULL(p.Oms,0))/NULLIF(p.Oms,0) AS decimal(10,1)) AS ÆndringPct\n"
-        "  FROM cur c FULL OUTER JOIN prev p ON c.KundeNavn=p.KundeNavn AND c.Varegruppe=p.Varegruppe\n"
-        "  ORDER BY Ændring ASC\n\n"
-        "B. CROSS-SELL MULIGHED (kunder der køber X men ikke Y) – til 'hvem kan vi sælge mere X til':\n"
-        "  SELECT DISTINCT s.KundeNavn,\n"
-        "         SUM(s.Salgsbeløb) AS OmsætningAndenKategori\n"
-        "  FROM [Salg] s\n"
-        "  WHERE s.Varegruppe='AndenKategori' AND YEAR(s.Dato)=2025\n"
-        "    AND s.KundeNavn NOT IN (\n"
-        "        SELECT DISTINCT KundeNavn FROM [Salg]\n"
-        "        WHERE Varegruppe='TargetKategori' AND YEAR(Dato)=2025\n"
-        "    )\n"
-        "  GROUP BY s.KundeNavn ORDER BY OmsætningAndenKategori DESC\n\n"
-        "C. KONTAKTLISTE / PRIORITERING (historiske købere af X, sorteret efter uudnyttet potentiale):\n"
-        "  WITH historisk AS (\n"
-        "      SELECT KundeNavn, MAX(SUM(Salgsbeløb)) OVER (PARTITION BY KundeNavn) AS MaksÅrligOms\n"
-        "      FROM [Salg] WHERE Beskrivelse LIKE '%keyword%' OR Varegruppe='X'\n"
-        "      GROUP BY KundeNavn, YEAR(Dato)\n"
-        "  ), iaar AS (\n"
-        "      SELECT KundeNavn, SUM(Salgsbeløb) AS OmsIår\n"
-        "      FROM [Salg] WHERE (Beskrivelse LIKE '%keyword%' OR Varegruppe='X') AND YEAR(Dato)=2025\n"
-        "      GROUP BY KundeNavn\n"
-        "  )\n"
-        "  SELECT h.KundeNavn, h.MaksÅrligOms, ISNULL(i.OmsIår,0) AS OmsIår,\n"
-        "         h.MaksÅrligOms - ISNULL(i.OmsIår,0) AS Potentiale\n"
-        "  FROM historisk h LEFT JOIN iaar i ON h.KundeNavn=i.KundeNavn\n"
-        "  GROUP BY h.KundeNavn, h.MaksÅrligOms, i.OmsIår\n"
-        "  ORDER BY Potentiale DESC\n\n"
-        "D. AT-RISK KUNDER (aktive tidligere, ikke købt i N måneder):\n"
-        "  SELECT KundeNavn, MAX(Dato) AS SidsteOrdre,\n"
-        "         DATEDIFF(month, MAX(Dato), GETDATE()) AS MånederSidenKøb,\n"
-        "         SUM(CASE WHEN YEAR(Dato)=YEAR(GETDATE())-1 THEN Salgsbeløb ELSE 0 END) AS Oms2024\n"
-        "  FROM [Salg]\n"
-        "  GROUP BY KundeNavn\n"
-        "  HAVING DATEDIFF(month, MAX(Dato), GETDATE()) >= 3\n"
-        "     AND SUM(CASE WHEN YEAR(Dato)=YEAR(GETDATE())-1 THEN Salgsbeløb ELSE 0 END) > 0\n"
-        "  ORDER BY Oms2024 DESC\n\n"
-        "Tilpas disse mønstre til det aktuelle spørgsmål – erstat placeholders med de rigtige filtre.\n\n"
-        "KRITISK KOLONNE-REGEL:\n"
-        "15. [Sales Invoice Line] har INGEN [Posting Date]-kolonne. "
-        "Forsøg på at bruge [Posting Date] på [Sales Invoice Line] giver fejl 207 (Invalid column name). "
-        "Til dato-filtrering på fakturalinjer: join til [Sales Invoice Header] på "
-        "[Document No_] og CompanyCode: "
-        "JOIN [Sales Invoice Header] sih ON sil.[Document No_] = sih.[No_] AND sil.CompanyCode = sih.CompanyCode "
-        "og brug derefter sih.[Posting Date] til dato-filter. "
-        "Alternativt (og foretrukket til mængde/omsætnings-spørgsmål): brug [Salg]-tabellen direkte med YEAR([Dato]) – "
-        "den har Varenummer, Beskrivelse, Varegruppe, KundeNavn og Dato samlet i én tabel."
-    )
-
-    sql_messages = [{'role': 'system', 'content': sql_system}]
-    for h in history[-10:]:
-        if h.get('role') in ('user', 'assistant') and h.get('content'):
-            sql_messages.append({'role': h['role'], 'content': h['content']})
-    sql_messages.append({'role': 'user', 'content': message})
-
     try:
-        sql_resp = client.chat.completions.create(
-            model='gpt-5.4-mini',
-            messages=sql_messages,
-            temperature=0,
-            max_completion_tokens=800,
-        )
-        raw_sql = _extract_sql(sql_resp.choices[0].message.content or '')
+        answer, combined_sql, total_rows = run_sales_agent(message, history, schema, customer_context)
     except Exception as e:
-        logger.error(f'SQL generation failed: {e}')
-        return jsonify({'error': 'Kunne ikke generere SQL-forespørgsel.'}), 500
+        logger.error(f'Sales agent error: {e}')
+        return jsonify({'error': 'Agenten fejlede. Prøv igen.'}), 500
 
-    # If the model returned prose instead of SQL (non-data question), return it directly
-    _SQL_START = re.compile(r'^\s*(SELECT|WITH|;WITH)\b', re.IGNORECASE)
-    if not _SQL_START.match(raw_sql):
-        logger.info('Non-SQL response from model – cleaning up via answer model')
-        try:
-            cleanup_resp = client.chat.completions.create(
-                model='gpt-5.4-mini',
-                messages=[
-                    {'role': 'system', 'content': (
-                        'Du er en hjælpsom salgsassistent hos JKF. '
-                        'Omskriv følgende besked til et pænt, kort dansk svar. '
-                        'Fjern alle pladsholdere i kantede parenteser som [mangler] eller [ukendt]. '
-                        'Forklar venligt at du ikke har nok information i konteksten til at svare præcist, '
-                        'og opfordr brugeren til at stille spørgsmålet som en ny selvstændig forespørgsel.'
-                    )},
-                    {'role': 'user', 'content': raw_sql},
-                ],
-                max_completion_tokens=300,
-                temperature=0.3,
-            )
-            clean_answer = cleanup_resp.choices[0].message.content or raw_sql
-        except Exception:
-            clean_answer = 'Jeg har ikke nok information i den nuværende samtale til at svare. Prøv at stille spørgsmålet på ny som en selvstændig forespørgsel.'
-        return jsonify({'answer': clean_answer, 'sql': None, 'row_count': None})
-
-    if _DW_DANGEROUS.search(raw_sql):
-        return jsonify({'error': 'Sikkerhedsfejl: kun læse-forespørgsler er tilladt.'}), 400
-
-    if _DW_UNSUPPORTED.search(raw_sql):
-        return jsonify({'error': 'Den genererede SQL bruger QUALIFY, som ikke understøttes af denne SQL Server. Prøv at omformulere spørgsmålet.'}), 400
-
-    salg_ok, bad_ref = _validate_sales_tables(raw_sql)
-    if not salg_ok:
-        logger.warning(f'SQL validation blocked reference to table: {bad_ref}')
-        return jsonify({'error': f'Adgangsfejl: forespørgslen forsøgte at tilgå "{bad_ref}", som ikke er tilladt.'}), 400
-
-    logger.info(f'DW SQL generated:\n{raw_sql}')
-    try:
-        conn = get_dw_connection()
-        cursor = conn.cursor(as_dict=True)
-        cursor.execute(raw_sql)
-        rows = cursor.fetchmany(500)
-        conn.close()
-        row_count = len(rows)
-        # Build a TSV-style result so the model sees unambiguous raw numbers
-        # (avoids JSON float representation confusing the formatting model)
-        if rows:
-            headers = list(rows[0].keys())
-            lines = ['\t'.join(headers)]
-            for r in rows:
-                lines.append('\t'.join(str(r[h]) for h in headers))
-            result_text = '\n'.join(lines)
-        else:
-            result_text = '(ingen rækker)'
-    except Exception as e:
-        err_str = str(e)
-        logger.error(f'DW query failed: {e}\nSQL was:\n{raw_sql}')
-        if '1033' in err_str:
-            return jsonify({'error': 'Den genererede SQL indeholder ORDER BY i en subquery uden TOP, som SQL Server ikke tillader. Prøv at omformulere spørgsmålet.'}), 500
-        return jsonify({'error': 'Databasefejl: forespørgslen kunne ikke udføres. Prøv at omformulere dit spørgsmål.'}), 500
-
-    answer_system = (
-        "Du er en analytisk salgsrådgiver hos JKF. Svar altid på dansk.\n\n"
-        "RÅDGIVERROLLE – dette er din primære opgave:\n"
-        "- Du er ikke kun en datapræsentator. Du bruger data til at anbefale konkrete handlinger.\n"
-        "- Ved kundenedgang: Identificér ALTID hvilke varegrupper/varer der driver faldet. "
-        "Er det bredt på tværs af kategorier, eller koncentreret i én? Foreslå en forklaring.\n"
-        "- Ved kontaktlister: Rangér kunder efter kontaktprioritet og forklar KORT hvorfor "
-        "(potentiale, historik, manglende kategori, fald siden sidst).\n"
-        "- Spot mønstre på tværs af data og nævn dem proaktivt, fx 'Bemærk: 3 andre kunder "
-        "viser samme faldmønster – overvej en bredere opfølgning.'\n"
-        "- Afslut ALTID med 1–3 konkrete næste skridt, fx "
-        "'Ring til Kunde X – de har ikke bestilt Varegruppe Y siden januar 2025.'\n"
-        "- Brug ✅ til muligheder/vækst og ⚠️ til risici/fald.\n\n"
-        "FORMATERINGSREGLER – følg dem præcist:\n"
-        "- Når svaret indeholder tabeldata med flere rækker: brug ALTID en markdown-tabel med pipe-syntaks (|).\n"
-        "- TABELRETNING – vælg den retning der giver den korteste og bredeste tabel:\n"
-        "  * HORISONTAL (foretrukket): én række per enhed (kunde, varegruppe, land osv.), "
-        "med tidsperioder eller målinger som kolonner. "
-        "Brug dette ved sammenligninger på tværs af år/perioder/metrics, fx:\n"
-        "    | Kunde         | Oms. 2023 | Oms. 2024 | Oms. 2025 | Margin% 2025 |\n"
-        "    |---------------|-----------|-----------|-----------|---------------|\n"
-        "    | Camfil Norge  | 1.200.000 | 980.000   | 1.450.000 | 33,8%        |\n"
-        "  * VERTIKAL: kun når data naturligt har én kolonne med værdier, "
-        "fx en simpel top-10 liste med én metric.\n"
-        "- Aldrig lav en tabel med en 'Periode' eller 'År'-kolonne og én værdi-kolonne – "
-        "det er altid bedre som en horisontal tabel med år som kolonneoverskrifter.\n"
-        "- Brug punktopstilling (- eller 1.) til lister og opsummeringer.\n"
-        "- Brug **fed** til vigtige tal og nøgleord.\n"
-        "- TALLFORMATERINGSKRAV – dette er kritisk:\n"
-        "  * Beløb og mængder: rund til nærmeste hele tal og brug dansk tusindtalsseparator (.). "
-        "53980.45 vises som 53.981. 1234567.89 vises som 1.234.568. INGEN decimaler på beløb.\n"
-        "  * Procenter: afrund til 1 decimal med komma som decimaltegn. 30.2934 vises som 30,3%. 5.0 vises som 5,0%.\n"
-        "  * ALDRIG afkort tal til færre cifre – 53980 må IKKE vises som 53,98 eller 53.98.\n"
-        "  * Behandl databaseværdien som autoritativ kilde – omformuler ikke tallet baseret på kontekst.\n"
-        "- Vær præcis og konkret – brug tal direkte fra resultatet."
-    )
-    answer_messages = [
-        {'role': 'system', 'content': answer_system},
-        {
-            'role': 'user',
-            'content': (
-                f"Brugerens spørgsmål: {message}\n\n"
-                f"SQL der blev kørt:\n{raw_sql}\n\n"
-                f"Resultat ({row_count} rækker):\n{result_text}"
-            ),
-        },
-    ]
-
-    try:
-        ans_resp = client.chat.completions.create(
-            model='gpt-5.4-mini',
-            messages=answer_messages,
-            temperature=0.3,
-            max_completion_tokens=3000,
-        )
-        answer = ans_resp.choices[0].message.content or ''
-    except Exception as e:
-        logger.error(f'Answer generation failed: {e}')
-        return jsonify({'error': 'Kunne ikke formulere svar.'}), 500
-
-    # Persist the assistant turn
     assistant_turn = SalesMessage(
         conversation_id=conv.id,
         role='assistant',
         content=answer,
-        sql_query=raw_sql,
-        row_count=row_count,
+        sql_query=combined_sql or None,
+        row_count=total_rows,
     )
     db.session.add(assistant_turn)
     conv.updated_at = datetime.utcnow()
@@ -6384,8 +6399,8 @@ def api_sales_chat():
 
     return jsonify({
         'answer': answer,
-        'sql': raw_sql,
-        'row_count': row_count,
+        'sql': combined_sql or None,
+        'row_count': total_rows,
         'conversation_id': conv.id,
         'msg_id': assistant_turn.id,
     })
@@ -6609,6 +6624,247 @@ def api_budget_conversation_delete(conv_id):
     return jsonify({'ok': True})
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Budget Agent — multi-query tool-calling architecture
+# ─────────────────────────────────────────────────────────────────────────────
+
+BUDGET_AGENT_SYSTEM_PROMPT = (
+    "Du er en analytisk budget-rådgiver hos JKF med adgang til JKF's budget-datawarehouse.\n\n"
+    "Du har ét værktøj: run_budget_query(question). Kald det for at hente data.\n\n"
+    "KALD VÆRKTØJET STRATEGISK – op til 3 gange pr. svar:\n"
+    "- Kald ALTID run_budget_query – gæt aldrig på svar uden data\n"
+    "- For komplekse spørgsmål: brug separate kald:\n"
+    "  * Fx: (1) afvigelse pr. konto for afdelingen, (2) rå posteringer for de konti med størst overforbrug\n"
+    "  * Fx: (1) YTD budget vs. aktuel pr. afdeling, (2) månedlig trend for de mest afvigende afdelinger\n"
+    "  * Fx: (1) budget vs. aktuel overordnet, (2) leverandørdetaljer for en specifik konto\n"
+    "- Hvert kald skal have et fokuseret delspørgsmål\n\n"
+    "RÅDGIVERROLLE:\n"
+    "- Forklar ikke kun hvad afvigelsen er — forklar HVORFOR og hvad der bør gøres\n"
+    "- Vurder om afvigelsen er et engangstilfælde eller en vedvarende trend\n"
+    "- Foreslå konkrete handlinger baseret på data\n"
+    "- Afslut ALTID med 1–2 konkrete næste skridt. Brug ⚠️ ved overforbrug og ✅ ved underforbrug\n\n"
+    "ANALYSESTRUKTUR:\n"
+    "1. Konstatering: hvad er afvigelsen (beløb og % af budget)?\n"
+    "2. Forklaring: hvad udgør forbruget (posteringer, leverandører, perioder)?\n"
+    "3. Trend-vurdering: er dette et mønster eller engangstilfælde?\n"
+    "4. Anbefaling: konkret næste skridt\n\n"
+    "KONTONAVNE: skriv ALTID kontonummer og navn sammen, fx **IT-konsulent (6320)**\n\n"
+    "FORMATERINGSREGLER:\n"
+    "- Brug markdown-tabeller med pipe-syntaks (|) til tabeldata\n"
+    "- HORISONTAL tabel (foretrukket): én konto/afdeling pr. række, perioder/metrics som kolonner\n"
+    "- TALFORMAT: dansk tusindtalsseparator (.), ingen decimaler på beløb, 1 decimal på procenter\n"
+    "- ALDRIG afkort tal – 53980 skrives 53.980\n"
+    "- Negative afvigelser = overforbrug (⚠️), positive = underforbrug\n"
+    "- Svar altid på dansk"
+)
+
+BUDGET_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "run_budget_query",
+            "description": (
+                "Forespørg JKF's budget-datawarehouse. Brug til budget vs. aktuel, afvigelser, "
+                "GL-konti, afdelingsudgifter, posteringer og YoY-sammenligninger. "
+                "Kald med ét fokuseret delspørgsmål."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "description": "Det specifikke spørgsmål – angiv periode, konto/afdeling og metrik",
+                    }
+                },
+                "required": ["question"],
+            },
+        },
+    }
+]
+
+
+def _budget_run_sql(question: str, history: list, schema: str,
+                    account_names_section: str, dept_names_section: str) -> tuple:
+    """Generate, validate and execute one budget SQL query. Returns (result_str, raw_sql, row_count)."""
+    sql_system = (
+        "Du er en T-SQL ekspert for JKF's budget-datawarehouse (SQL Server, database: BC2SQL_Data).\n\n"
+        "Du har adgang til præcis to views — brug navnene PRÆCIS som angivet (ingen schema-prefix):\n\n"
+        "1. [vw_GL_actuals_vs_budget] — Budgetafvigelser pr. konto/afdeling/måned.\n"
+        "   Kolonner: G_L Account No_ (kontonummer), Account Name (kontonavn), Year (int), Month (int), "
+        "Global Dimension 1 Code (afdelingskode), Department Name (afdelingsnavn), "
+        "Actual (aktuel beløb for måneden), Budget (budgetteret beløb), Variance (afvigelse = Actual - Budget).\n"
+        "   Brug dette view til: afvigelsesanalyse, oversigt over over/underforbrug, budget vs. aktuel pr. konto eller afdeling.\n\n"
+        "2. [vw_GL_entry_detailed] — Rå posteringer fra kontoplanen.\n"
+        "   Kolonner: Account Name (kontonavn), Posting Date (bogføringsdato), Document No_ (bilagsnummer), "
+        "Description (beskrivelse), Amount (beløb), Department Code (afdelingskode), "
+        "Department Name (afdelingsnavn), Source No_ (leverandør-/kildenummer), Source Name (leverandørnavn).\n"
+        "   Brug dette view til: forklaring af specifikke posteringer, leverandøroverblik, sammenligning med tidligere år.\n\n"
+        "STRATEGI – vælg det rette view (eller begge):\n"
+        "- 'Hvad er afvigelsen?' → brug [vw_GL_actuals_vs_budget]\n"
+        "- 'Hvorfor er konto X over budget?' / 'Hvad er der posteret?' → brug [vw_GL_entry_detailed]\n"
+        "- Kombiner begge via CTE/JOIN for at konstatere afvigelsen OG forklare den med posteringer.\n\n"
+        "FULDT SKEMA:\n"
+        f"{schema}\n\n"
+        f"{account_names_section}"
+        f"{dept_names_section}"
+        "OBLIGATORISKE REGLER:\n"
+        "0. Generér ALTID et SELECT-statement. Du har fuld adgang til dataene.\n"
+        "1. Returner KUN rå SQL, ingen forklaring, ingen markdown, ingen ```.\n"
+        "2. Brug firkantede parenteser om view-navne og kolonner med mellemrum eller specialtegn.\n"
+        "2b. Inkluder ALTID [G_L Account No_] i SELECT når [Account Name] er med.\n"
+        "2c. FILTRERING: brug ALTID WHERE — brug ALDRIG COALESCE i GROUP BY som erstatning for filtrering.\n"
+        "3. Subquery-aliaser UDEN AS: FROM (SELECT ...) sub.\n"
+        "4. Kolonne-aliaser bruger AS normalt: SUM(Actual) AS AktuelTotal.\n"
+        "5. Brug TOP n (ikke LIMIT).\n"
+        "6. CTEs: WITH ctename AS (SELECT ...) SELECT ... — uden semikolon foran WITH.\n"
+        "7. Brug aldrig: DROP, INSERT, UPDATE, DELETE, TRUNCATE, ALTER, CREATE, EXEC, QUALIFY.\n"
+        "8. ORDER BY er IKKE tilladt inde i subqueries eller CTEs uden TOP.\n"
+        "9. Du må KUN forespørge på de to views nævnt ovenfor.\n"
+        "10. Negative Variance-værdier betyder overforbrug; positive betyder underforbrug.\n"
+        "11. Bevar årsfilter fra samtalehistorikken.\n"
+        "12. VIGTIGT — kolonner til dato varierer:\n"
+        "    [vw_GL_actuals_vs_budget]: brug [Year] og [Month] direkte.\n"
+        "    [vw_GL_entry_detailed]: ingen [Year]/[Month] — brug YEAR([Posting Date]) og MONTH([Posting Date]).\n"
+        "    Brug ALDRIG [Global Dimension 1 Code] i [vw_GL_entry_detailed] — kolonnen hedder [Department Code] der.\n"
+        f"13. DATO-KONTEKST: I dag er {datetime.now().strftime('%Y-%m-%d')}. "
+        f"Indeværende år = {datetime.now().year}. Indeværende måned = {datetime.now().month}.\n"
+        "    - Hent ALTID det efterspurgte år OG året før i samme forespørgsel.\n"
+        f"    - SAMME PERIODE-REGEL: filtrer begge år til Month <= {datetime.now().month} medmindre andet angives.\n"
+        f"      Standard: WHERE Year IN ({datetime.now().year - 1}, {datetime.now().year}) AND Month <= {datetime.now().month}\n"
+    )
+
+    _SQL_START = re.compile(r'^\s*(SELECT|WITH|;WITH)\b', re.IGNORECASE)
+    sql_messages = [{'role': 'system', 'content': sql_system}]
+    for h in history[-10:]:
+        if h.get('role') in ('user', 'assistant') and h.get('content'):
+            sql_messages.append({'role': h['role'], 'content': h['content']})
+    sql_messages.append({'role': 'user', 'content': question})
+
+    try:
+        sql_resp = client.chat.completions.create(
+            model='gpt-5.4-mini',
+            messages=sql_messages,
+            temperature=0,
+            max_completion_tokens=1500,
+        )
+        raw_sql = _extract_sql(sql_resp.choices[0].message.content or '')
+    except Exception as e:
+        logger.error(f'Budget SQL generation failed: {e}')
+        return "Fejl: Kunne ikke generere SQL.", '', 0
+
+    if not _SQL_START.match(raw_sql):
+        return raw_sql, '', 0
+
+    if _DW_DANGEROUS.search(raw_sql):
+        return "Sikkerhedsfejl: kun læse-forespørgsler er tilladt.", '', 0
+
+    if _DW_UNSUPPORTED.search(raw_sql):
+        return "Fejl: SQL bruger QUALIFY, som ikke understøttes.", '', 0
+
+    budget_ok, bad_ref = _validate_budget_views(raw_sql)
+    if not budget_ok:
+        return f"Adgangsfejl: forespørgslen forsøgte at tilgå '{bad_ref}'.", '', 0
+
+    logger.info(f'Budget SQL generated:\n{raw_sql}')
+    try:
+        conn = get_budget_connection()
+        cursor = conn.cursor(as_dict=True)
+        cursor.execute(raw_sql)
+        rows = cursor.fetchmany(500)
+        conn.close()
+        row_count = len(rows)
+        if rows:
+            headers = list(rows[0].keys())
+            lines = ['\t'.join(headers)]
+            for r in rows:
+                lines.append('\t'.join(str(r[h]) for h in headers))
+            result_text = '\n'.join(lines)
+        else:
+            result_text = '(ingen rækker)'
+    except Exception as e:
+        err_str = str(e)
+        logger.error(f'Budget query failed: {e}\nSQL was:\n{raw_sql}')
+        if '1033' in err_str:
+            return "Fejl: SQL indeholder ORDER BY i subquery uden TOP.", raw_sql, 0
+        return f"Databasefejl: forespørgslen kunne ikke udføres ({e}).", raw_sql, 0
+
+    return f"SQL kørt:\n{raw_sql}\n\nResultat ({row_count} rækker):\n{result_text}", raw_sql, row_count
+
+
+def run_budget_agent(message: str, history: list, schema: str,
+                     account_names_section: str, dept_names_section: str) -> tuple:
+    """Tool-calling loop for the budget agent. Returns (answer_text, combined_sql, total_row_count)."""
+    full_messages = [{"role": "system", "content": BUDGET_AGENT_SYSTEM_PROMPT}]
+    for h in history[-10:]:
+        if h.get('role') in ('user', 'assistant') and h.get('content'):
+            full_messages.append({'role': h['role'], 'content': h['content']})
+    full_messages.append({'role': 'user', 'content': message})
+
+    all_sqls: list = []
+    total_rows = 0
+    sub_history = [m for m in history if m.get('role') in ('user', 'assistant')]
+
+    for _ in range(4):
+        try:
+            resp = client.chat.completions.create(
+                model='gpt-5.4-mini',
+                messages=full_messages,
+                tools=BUDGET_TOOLS,
+                tool_choice="auto",
+                temperature=0.3,
+                max_completion_tokens=4000,
+            )
+        except Exception as e:
+            logger.error(f'Budget agent LLM call failed: {e}')
+            return "Beklager, der opstod en fejl. Prøv igen.", '\n---\n'.join(all_sqls), total_rows
+
+        msg = resp.choices[0].message
+        if not msg.tool_calls:
+            return msg.content or "Ingen svar genereret.", '\n---\n'.join(all_sqls), total_rows
+
+        full_messages.append({
+            "role": "assistant",
+            "content": msg.content,
+            "tool_calls": [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                }
+                for tc in msg.tool_calls
+            ],
+        })
+
+        for tc in msg.tool_calls:
+            try:
+                args = json.loads(tc.function.arguments)
+            except Exception:
+                args = {}
+            result_str, raw_sql, row_count = _budget_run_sql(
+                args.get("question", ""), sub_history, schema, account_names_section, dept_names_section
+            )
+            if raw_sql:
+                all_sqls.append(raw_sql)
+                total_rows += row_count
+            full_messages.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": result_str,
+            })
+
+    try:
+        final_resp = client.chat.completions.create(
+            model='gpt-5.4-mini',
+            messages=full_messages,
+            temperature=0.3,
+            max_completion_tokens=4000,
+        )
+        return final_resp.choices[0].message.content or "Ingen svar.", '\n---\n'.join(all_sqls), total_rows
+    except Exception as e:
+        logger.error(f'Budget agent final call failed: {e}')
+        return "Beklager, der opstod en fejl.", '\n---\n'.join(all_sqls), total_rows
+
+
 @app.route('/api/budget-chat', methods=['POST'])
 @budget_agent_required
 def api_budget_chat():
@@ -6663,214 +6919,20 @@ def api_budget_chat():
         "Eksempel: WHERE [Global Dimension 1 Code] = 'IT'. Brug ALDRIG LIKE til afdelingskoder.\n\n"
     ) if dept_names else ''
 
-    sql_system = (
-        "Du er en T-SQL ekspert for JKF's budget-datawarehouse (SQL Server, database: BC2SQL_Data).\n\n"
-        "Du har adgang til præcis to views — brug navnene PRÆCIS som angivet (ingen schema-prefix):\n\n"
-        "1. [vw_GL_actuals_vs_budget] — Budgetafvigelser pr. konto/afdeling/måned.\n"
-        "   Kolonner: G_L Account No_ (kontonummer), Account Name (kontonavn), Year (int), Month (int), "
-        "Global Dimension 1 Code (afdelingskode), Department Name (afdelingsnavn), "
-        "Actual (aktuel beløb for måneden), Budget (budgetteret beløb), Variance (afvigelse = Actual - Budget).\n"
-        "   Brug dette view til: afvigelsesanalyse, oversigt over over/underforbrug, budget vs. aktuel pr. konto eller afdeling.\n\n"
-        "2. [vw_GL_entry_detailed] — Rå posteringer fra kontoplanen.\n"
-        "   Kolonner: Account Name (kontonavn), Posting Date (bogføringsdato), Document No_ (bilagsnummer), "
-        "Description (beskrivelse), Amount (beløb), Department Code (afdelingskode), "
-        "Department Name (afdelingsnavn), Source No_ (leverandør-/kildenummer), Source Name (leverandørnavn).\n"
-        "   Brug dette view til: forklaring af specifikke posteringer, leverandøroverblik, sammenligning med tidligere år, "
-        "analyse af hvad der udgør en kontos forbrug.\n\n"
-        "STRATEGI – vælg det rette view (eller begge):\n"
-        "- 'Hvad er afvigelsen?' / 'Hvilke konti er over budget?' → brug [vw_GL_actuals_vs_budget]\n"
-        "- 'Hvorfor er konto X over budget?' / 'Hvad er der posteret?' / 'Sammenlign med sidste år' → brug [vw_GL_entry_detailed]\n"
-        "- Kombiner begge views via CTE eller JOIN, når du vil konstatere afvigelsen OG forklare den med posteringer.\n\n"
-        "FULDT SKEMA:\n"
-        f"{schema}\n\n"
-        f"{account_names_section}"
-        f"{dept_names_section}"
-        "OBLIGATORISKE REGLER:\n"
-        "0. Generér ALTID et SELECT-statement. Du har fuld adgang til dataene.\n"
-        "1. Returner KUN rå SQL, ingen forklaring, ingen markdown, ingen ```.\n"
-        "2. Brug firkantede parenteser om view-navne og kolonner med mellemrum eller specialtegn.\n"
-        "2b. Inkluder ALTID [G_L Account No_] i SELECT når [Account Name] er med — kontonummer skal altid fremgå ved siden af kontonavnet.\n"
-        "2c. FILTRERING: brug ALTID WHERE til at filtrere rækker — brug ALDRIG COALESCE i GROUP BY som erstatning for filtrering. "
-        "COALESCE i GROUP BY returnerer alle rækker og maskerer blot NULL-værdier, men filtrerer intet ud. "
-        "Vil du kun have rækker uden afdeling: brug WHERE [Department Name] IS NULL. "
-        "COALESCE må kun bruges i SELECT til at formatere output, f.eks. COALESCE([Department Name], 'Ingen afdeling') AS [Department Name].\n"
-        "3. Subquery-aliaser UDEN AS: FROM (SELECT ...) sub — IKKE FROM (SELECT ...) AS sub.\n"
-        "4. Kolonne-aliaser bruger AS normalt: SUM(Actual) AS AktuelTotal.\n"
-        "5. Brug TOP n (ikke LIMIT) for at begrænse resultater.\n"
-        "6. CTEs: WITH ctename AS (SELECT ...) SELECT ... — uden semikolon foran WITH.\n"
-        "7. Brug aldrig: DROP, INSERT, UPDATE, DELETE, TRUNCATE, ALTER, CREATE, EXEC, QUALIFY.\n"
-        "8. ORDER BY er IKKE tilladt inde i subqueries eller CTEs uden TOP.\n"
-        "9. Du må KUN forespørge på de to views nævnt ovenfor — ingen andre tabeller eller views.\n"
-        "10. Negative Variance-værdier betyder overforbrug (Actual > Budget); positive betyder underforbrug.\n"
-        "11. Bevar årsfilter fra samtalehistorikken medmindre brugeren eksplicit angiver et andet år.\n"
-        "12. VIGTIGT — kolonner til dato varierer mellem views:\n"
-        "    [vw_GL_actuals_vs_budget]: har kolonnerne [Year] og [Month] direkte — brug dem i WHERE, GROUP BY og SELECT.\n"
-        "    [vw_GL_entry_detailed]: har INGEN [Year] eller [Month] kolonne — brug KUN:\n"
-        "      WHERE: YEAR([Posting Date]) IN (...) AND MONTH([Posting Date]) <= ...\n"
-        "      SELECT: YEAR([Posting Date]) AS [Year], MONTH([Posting Date]) AS [Month]\n"
-        "      GROUP BY: YEAR([Posting Date]), MONTH([Posting Date])\n"
-        "    Brug ALDRIG [Year] eller [Month] direkte i [vw_GL_entry_detailed] — det giver fejl 207.\n"
-        f"13. DATO-KONTEKST: I dag er {datetime.now().strftime('%Y-%m-%d')}. Indeværende år = {datetime.now().year}. Indeværende måned = {datetime.now().month}.\n"
-        "    - Inkluder ALTID Year og Month i SELECT, så brugeren kan se hvilken periode tallene tilhører.\n"
-        "    - Hent ALTID det efterspurgte år OG året før i samme forespørgsel, så svaret kan sammenligne med forrige år.\n"
-        f"    - SAMME PERIODE-REGEL (kritisk): sammenlign kun de måneder der er gået i det nyeste år.\n"
-        f"      Vi er i måned {datetime.now().month} ({datetime.now().year}), så filtrer begge år til Month <= {datetime.now().month} medmindre andet angives.\n"
-        "      Eksempler:\n"
-        f"      Ingen årsangivelse (standard) → WHERE Year IN ({datetime.now().year - 1}, {datetime.now().year}) AND Month <= {datetime.now().month}\n"
-        f"      'I 2025' → WHERE Year IN (2024, 2025) AND Month <= 12  -- fuldt år, ingen månedsbegrænsning\n"
-        "      'I 2023' → WHERE Year IN (2022, 2023) AND Month <= 12\n"
-        f"      'Denne måned' → WHERE Year IN ({datetime.now().year - 1}, {datetime.now().year}) AND Month = {datetime.now().month}\n"
-        "      'Hele 2025' / 'hele året' → Month <= 12 (ingen månedsbegrænsning)\n"
-        "    - Undtagelse: hvis brugeren spørger om et historisk år (ikke indeværende), brug Month <= 12 (hele året).\n"
-        "    - Undtagelse: hvis brugeren EKSPLICIT siger 'kun i år' eller 'kun [årstal]' uden sammenligning, hent kun det ene år.\n"
-        "    - Sig ALDRIG 'ingen data for forrige år' — forrige år er altid inkluderet i forespørgslen.\n"
-    )
-
-    sql_messages = [{'role': 'system', 'content': sql_system}]
-    for h in history[-10:]:
-        if h.get('role') in ('user', 'assistant') and h.get('content'):
-            sql_messages.append({'role': h['role'], 'content': h['content']})
-    sql_messages.append({'role': 'user', 'content': message})
-
     try:
-        sql_resp = client.chat.completions.create(
-            model='gpt-5.4-mini',
-            messages=sql_messages,
-            temperature=0,
-            max_completion_tokens=1500,
+        answer, combined_sql, total_rows = run_budget_agent(
+            message, history, schema, account_names_section, dept_names_section
         )
-        raw_sql = _extract_sql(sql_resp.choices[0].message.content or '')
     except Exception as e:
-        logger.error(f'Budget SQL generation failed: {e}')
-        return jsonify({'error': 'Kunne ikke generere SQL-forespørgsel.'}), 500
-
-    # Handle prose/non-SQL response
-    _SQL_START = re.compile(r'^\s*(SELECT|WITH|;WITH)\b', re.IGNORECASE)
-    if not _SQL_START.match(raw_sql):
-        try:
-            cleanup_resp = client.chat.completions.create(
-                model='gpt-5.4-mini',
-                messages=[
-                    {'role': 'system', 'content': (
-                        'Du er en hjælpsom budget-assistent hos JKF. '
-                        'Omskriv følgende besked til et pænt, kort dansk svar. '
-                        'Forklar venligt at du ikke har nok information til at svare præcist, '
-                        'og opfordr brugeren til at stille spørgsmålet på ny.'
-                    )},
-                    {'role': 'user', 'content': raw_sql},
-                ],
-                max_completion_tokens=300,
-                temperature=0.3,
-            )
-            clean_answer = cleanup_resp.choices[0].message.content or raw_sql
-        except Exception:
-            clean_answer = 'Jeg har ikke nok information til at svare. Prøv at stille spørgsmålet på ny.'
-        return jsonify({'answer': clean_answer, 'sql': None, 'row_count': None})
-
-    if _DW_DANGEROUS.search(raw_sql):
-        return jsonify({'error': 'Sikkerhedsfejl: kun læse-forespørgsler er tilladt.'}), 400
-
-    if _DW_UNSUPPORTED.search(raw_sql):
-        return jsonify({'error': 'Den genererede SQL bruger QUALIFY, som ikke understøttes. Prøv at omformulere spørgsmålet.'}), 400
-
-    budget_ok, bad_ref = _validate_budget_views(raw_sql)
-    if not budget_ok:
-        logger.warning(f'Budget SQL validation blocked reference: {bad_ref}')
-        return jsonify({'error': f'Adgangsfejl: forespørgslen forsøgte at tilgå "{bad_ref}", som ikke er tilladt.'}), 400
-
-    logger.info(f'Budget SQL generated:\n{raw_sql}')
-    try:
-        conn = get_budget_connection()
-        cursor = conn.cursor(as_dict=True)
-        cursor.execute(raw_sql)
-        rows = cursor.fetchmany(500)
-        conn.close()
-        row_count = len(rows)
-        if rows:
-            headers = list(rows[0].keys())
-            lines = ['\t'.join(headers)]
-            for r in rows:
-                lines.append('\t'.join(str(r[h]) for h in headers))
-            result_text = '\n'.join(lines)
-        else:
-            result_text = '(ingen rækker)'
-    except Exception as e:
-        err_str = str(e)
-        logger.error(f'Budget query failed: {e}\nSQL was:\n{raw_sql}')
-        if '1033' in err_str:
-            return jsonify({'error': 'Den genererede SQL indeholder ORDER BY i en subquery uden TOP. Prøv at omformulere spørgsmålet.'}), 500
-        return jsonify({'error': 'Databasefejl: forespørgslen kunne ikke udføres. Prøv at omformulere dit spørgsmål.'}), 500
-
-    answer_system = (
-        "Du er en analytisk budget-rådgiver hos JKF. Svar altid på dansk.\n\n"
-        "RÅDGIVERROLLE – din primære opgave:\n"
-        "- Forklar ikke kun hvad afvigelsen er — forklar HVORFOR og hvad der bør gøres.\n"
-        "- Vurder om afvigelsen er et engangstilfælde eller en vedvarende trend: "
-        "hvis data viser overforbrug over flere måneder på samme konto, flag det tydeligt.\n"
-        "- Foreslå konkrete handlinger, fx 'Overvej at genforhandle kontrakt med leverandør X' "
-        "eller 'Afklar med afdelingen om der er planlagte udgifter der ikke er budgetteret.'\n"
-        "- Fremhæv proaktivt hvis en afdeling eller konto skiller sig ud fra mønsteret.\n"
-        "- Afslut ALTID med 1–2 konkrete næste skridt.\n"
-        "- Brug ⚠️ ved overforbrug og ✅ ved underforbrug/positiv trend.\n\n"
-        "ANALYSESTRUKTUR – angiv ALTID:\n"
-        "1. Konstateringen: hvad er afvigelsen (beløb og procent af budget)?\n"
-        "2. Forklaringen: hvad udgør forbruget (posteringer, leverandører, perioder)?\n"
-        "3. Trend-vurdering: er dette anderledes end samme periode sidste år, og er det et mønster?\n"
-        "4. Anbefaling: konkret næste skridt.\n\n"
-        "KONTONAVNE OG KONTONUMRE:\n"
-        "- Når du omtaler en konto, skriv ALTID kontonummer og navn sammen, f.eks.: **IT-konsulent (6320)**.\n"
-        "- I tabeller: inkluder kolonnen Kontonummer når (G_L Account No_) anvendes sammen med Kontonavn.\n"
-        "- Nævn aldrig et kontonavn uden kontonummeret i parentes.\n\n"
-        "FORMATERINGSREGLER:\n"
-        "- Brug markdown-tabel (|) til tabeldata med flere rækker.\n"
-        "- TABELRETNING – vælg den korteste og bredeste form:\n"
-        "  * HORISONTAL (foretrukket): én række per enhed (konto, afdeling), "
-        "perioder/metrics som kolonner. Fx:\n"
-        "    | Konto                | Budget | Actual | Afvigelse |\n"
-        "    |----------------------|--------|--------|-----------|\n"
-        "    | IT-konsulent (6320)  | 50.000 | 62.000 | -12.000   |\n"
-        "  * VERTIKAL: kun ved simple lister med én metric.\n"
-        "- Aldrig én-kolonne tabeller med 'År' og én værdi – brug i stedet år som kolonneoverskrifter.\n"
-        "- Brug punktopstilling til lister og opsummeringer.\n"
-        "- Brug **fed** til vigtige tal og nøgleord.\n"
-        "- TALFORMAT (kritisk): dansk tusindtalsseparator (.), komma som decimaltegn.\n"
-        "  Eksempel: 53.980 DKK, -12,3%.\n"
-        "  Beløb: ingen decimaler. Procenter: 1 decimal.\n"
-        "  ALDRIG afkort tal — 53980 skrives som 53.980, ikke 53,98.\n"
-        "- Negative afvigelser = overforbrug (fremhæv med ⚠️ eller **fed**).\n"
-        "- Positive afvigelser = underforbrug."
-    )
-
-    answer_messages = [
-        {'role': 'system', 'content': answer_system},
-        {
-            'role': 'user',
-            'content': (
-                f"Brugerens spørgsmål: {message}\n\n"
-                f"SQL der blev kørt:\n{raw_sql}\n\n"
-                f"Resultat ({row_count} rækker):\n{result_text}"
-            ),
-        },
-    ]
-
-    try:
-        ans_resp = client.chat.completions.create(
-            model='gpt-5.4-mini',
-            messages=answer_messages,
-            temperature=0.3,
-            max_completion_tokens=6000,
-        )
-        answer = ans_resp.choices[0].message.content or ''
-    except Exception as e:
-        logger.error(f'Budget answer generation failed: {e}')
-        return jsonify({'error': 'Kunne ikke formulere svar.'}), 500
+        logger.error(f'Budget agent error: {e}')
+        return jsonify({'error': 'Agenten fejlede. Prøv igen.'}), 500
 
     assistant_turn = BudgetMessage(
         conversation_id=conv.id,
         role='assistant',
         content=answer,
-        sql_query=raw_sql,
-        row_count=row_count,
+        sql_query=combined_sql or None,
+        row_count=total_rows,
     )
     db.session.add(assistant_turn)
     conv.updated_at = datetime.utcnow()
@@ -6878,8 +6940,8 @@ def api_budget_chat():
 
     return jsonify({
         'answer': answer,
-        'sql': raw_sql,
-        'row_count': row_count,
+        'sql': combined_sql or None,
+        'row_count': total_rows,
         'conversation_id': conv.id,
         'msg_id': assistant_turn.id,
     })
