@@ -84,6 +84,7 @@ if not app.debug:
     fh.setFormatter(logging.Formatter('%(asctime)s %(levelname)s: %(message)s'))
     fh.setLevel(logging.INFO)
     app.logger.addHandler(fh)
+    logger.addHandler(fh)
 
 # ── Qdrant client ─────────────────────────────────────────────────────────────
 QDRANT_COLLECTION = "jkf_kb"
@@ -6053,6 +6054,7 @@ def get_budget_connection():
 
 _budget_schema_cache = None
 _budget_account_names_cache = None
+_budget_department_names_cache = None
 _budget_view_map = {}   # kept for cache-invalidation compatibility
 
 _BUDGET_VIEW_SHORT_NAMES = {'vw_gl_actuals_vs_budget', 'vw_gl_entry_detailed'}
@@ -6081,7 +6083,7 @@ def get_budget_schema() -> str:
 
 
 def get_budget_account_names() -> str:
-    """Return a cached newline-separated list of all distinct Account Name values."""
+    """Return a cached list of all distinct G_L Account No_ + Account Name pairs."""
     global _budget_account_names_cache
     if _budget_account_names_cache:
         return _budget_account_names_cache
@@ -6089,18 +6091,43 @@ def get_budget_account_names() -> str:
         conn = get_budget_connection()
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT DISTINCT [Account Name]
+            SELECT DISTINCT [G_L Account No_], [Account Name]
             FROM [vw_GL_actuals_vs_budget]
             WHERE [Account Name] IS NOT NULL
-            ORDER BY [Account Name]
+            ORDER BY [G_L Account No_]
         """)
-        names = [row[0] for row in cursor.fetchall()]
+        rows = cursor.fetchall()
         conn.close()
-        _budget_account_names_cache = "\n".join(names)
+        lines = [f"{row[0]} — {row[1]}" for row in rows]
+        _budget_account_names_cache = "\n".join(lines)
     except Exception as e:
         logger.warning(f'Could not fetch budget account names: {e}')
         _budget_account_names_cache = ''
     return _budget_account_names_cache
+
+
+def get_budget_department_names() -> str:
+    """Return a cached newline-separated list of all distinct Department Name + Code pairs."""
+    global _budget_department_names_cache
+    if _budget_department_names_cache:
+        return _budget_department_names_cache
+    try:
+        conn = get_budget_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT DISTINCT [Global Dimension 1 Code], [Department Name]
+            FROM [vw_GL_actuals_vs_budget]
+            WHERE [Department Name] IS NOT NULL
+            ORDER BY [Department Name]
+        """)
+        rows = cursor.fetchall()
+        conn.close()
+        lines = [f"{row[0]} — {row[1]}" for row in rows if row[0] or row[1]]
+        _budget_department_names_cache = "\n".join(lines)
+    except Exception as e:
+        logger.warning(f'Could not fetch budget department names: {e}')
+        _budget_department_names_cache = ''
+    return _budget_department_names_cache
 
 
 def _validate_budget_views(sql: str) -> tuple:
@@ -6272,11 +6299,21 @@ def api_budget_chat():
 
     account_names = get_budget_account_names()
     account_names_section = (
-        "PRÆCISE KONTONAVNE (Account Name) — brug disse EKSAKT ved filtrering, inkl. store/små bogstaver og bindestreger:\n"
+        "PRÆCISE KONTONUMRE OG -NAVNE (G_L Account No_ — Account Name) — format: kontonummer — kontonavn:\n"
         f"{account_names}\n\n"
-        "Når brugeren nævner en konto (f.eks. 'IT konsulent' eller 'lønninger'), find det nærmeste navn på listen ovenfor "
-        "og brug det præcist i WHERE-klausulen. Brug ALTID = eller IN med præcise navne — brug kun LIKE som absolut sidste udvej.\n\n"
+        "Når brugeren nævner en konto, find den korrekte linje ovenfor og filtrer ALTID på [G_L Account No_] i WHERE — "
+        "aldrig på [Account Name] alene, da kontonummeret er det præcise nøglefelt. "
+        "Eksempel: WHERE [G_L Account No_] = '110200'. Brug = eller IN, aldrig LIKE.\n\n"
     ) if account_names else ''
+
+    dept_names = get_budget_department_names()
+    dept_names_section = (
+        "PRÆCISE AFDELINGSKODER OG -NAVNE (Global Dimension 1 Code — Department Name) — brug disse EKSAKT:\n"
+        f"{dept_names}\n\n"
+        "Når brugeren nævner en afdeling (f.eks. 'IT' eller 'salg'), find den korrekte linje ovenfor og filtrer "
+        "ALTID på [Global Dimension 1 Code] (ikke [Department Name]) i WHERE-klausulen. "
+        "Eksempel: WHERE [Global Dimension 1 Code] = 'IT'. Brug ALDRIG LIKE til afdelingskoder.\n\n"
+    ) if dept_names else ''
 
     sql_system = (
         "Du er en T-SQL ekspert for JKF's budget-datawarehouse (SQL Server, database: BC2SQL_Data).\n\n"
@@ -6299,6 +6336,7 @@ def api_budget_chat():
         "FULDT SKEMA:\n"
         f"{schema}\n\n"
         f"{account_names_section}"
+        f"{dept_names_section}"
         "OBLIGATORISKE REGLER:\n"
         "0. Generér ALTID et SELECT-statement. Du har fuld adgang til dataene.\n"
         "1. Returner KUN rå SQL, ingen forklaring, ingen markdown, ingen ```.\n"
@@ -6866,9 +6904,16 @@ def _master_query_budget(question: str, history: list) -> str:
 
     account_names = get_budget_account_names()
     account_names_section = (
-        "PRÆCISE KONTONAVNE — brug disse eksakt:\n"
+        "PRÆCISE KONTONUMRE OG -NAVNE (G_L Account No_ — Account Name) — filtrer ALTID på [G_L Account No_], ikke [Account Name]:\n"
         f"{account_names}\n\n"
     ) if account_names else ''
+
+    dept_names = get_budget_department_names()
+    dept_names_section = (
+        "PRÆCISE AFDELINGSKODER OG -NAVNE (Global Dimension 1 Code — Department Name) — brug disse eksakt:\n"
+        f"{dept_names}\n\n"
+        "Filtrer ALTID på [Global Dimension 1 Code] i WHERE — aldrig på [Department Name].\n\n"
+    ) if dept_names else ''
 
     sql_system = (
         "Du er en T-SQL ekspert for JKF's budget-datawarehouse (SQL Server, database: BC2SQL_Data).\n\n"
@@ -6880,6 +6925,7 @@ def _master_query_budget(question: str, history: list) -> str:
         "FULDT SKEMA:\n"
         f"{schema}\n\n"
         f"{account_names_section}"
+        f"{dept_names_section}"
         "OBLIGATORISKE REGLER:\n"
         "0. Generér ALTID et SELECT-statement.\n"
         "1. Returner KUN rå SQL, ingen forklaring, ingen markdown, ingen ```.\n"
@@ -7146,6 +7192,49 @@ def api_master_chat():
         'conversation_id': conv_id,
         'msg_id': master_asst_turn.id,
     })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Diagnostics
+# ─────────────────────────────────────────────────────────────────────────────
+@app.route('/test-connection')
+@login_required
+def test_connection():
+    results = {}
+
+    # OpenAI
+    try:
+        settings = get_jkf_settings()
+        model = (settings.model or "gpt-4o-mini").strip()
+        probe = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": "ping"}],
+            max_tokens=5,
+        )
+        results['openai'] = {'ok': True, 'model': model, 'response': probe.choices[0].message.content}
+    except Exception as e:
+        results['openai'] = {'ok': False, 'error': str(e)}
+
+    # Qdrant
+    try:
+        qc = get_qdrant_client()
+        if qc is None:
+            results['qdrant'] = {'ok': False, 'error': 'Client not initialised — check QDRANT_URL and QDRANT_API_KEY in .env'}
+        else:
+            info = qc.get_collection(QDRANT_COLLECTION)
+            results['qdrant'] = {'ok': True, 'vectors': info.vectors_count}
+    except Exception as e:
+        results['qdrant'] = {'ok': False, 'error': str(e)}
+
+    # Config summary
+    results['config'] = {
+        'openai_key_set': bool(os.environ.get('OPENAI_API_KEY')),
+        'qdrant_url_set': bool(os.environ.get('QDRANT_URL')),
+        'database': app.config.get('SQLALCHEMY_DATABASE_URI', '').split('?')[0],
+    }
+
+    all_ok = all(v.get('ok') for v in results.values() if isinstance(v, dict) and 'ok' in v)
+    return jsonify({'status': 'ok' if all_ok else 'degraded', **results})
 
 
 # ─────────────────────────────────────────────────────────────────────────────
